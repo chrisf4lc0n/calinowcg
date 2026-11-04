@@ -35,7 +35,10 @@ import type { AddressInfo } from 'node:net'
  *                                              REPORT body (e.g. VTODO).
  *   - GET  /.well-known/caldav                → 301 redirect to /mock-caldav/dav/
  *   - PROPFIND /mock-caldav/dav/              → 207 with current-user-principal
- *   - PROPFIND /dav/principals/...            → 207 with calendar-home-set
+ *   - PROPFIND /dav/principals/...            → 207 with calendar-home-set,
+ *                                              plus calendar-user-address-set
+ *                                              and displayname where the
+ *                                              account defines them.
  *   - PROPFIND /dav/calendars/...             → 207 listing the collections
  *                                              of that account (account A:
  *                                              Personal + Work + the
@@ -68,6 +71,12 @@ interface MockCollection {
   components: string[]
   /** Marks the collection as Calino's settings calendar. */
   isSettings?: boolean
+  /**
+   * Make this a Radicale-style `VSUBSCRIBED` collection (#237): resourcetype
+   * `collection + cs:subscribed` (no `calendar`), holding no events, with the
+   * external feed URL in `cs:source/href`.
+   */
+  subscribedSource?: string
   /**
    * Withhold the `ETag` response header on PUT, forcing Calino's PROPFIND
    * fallback to recover it.
@@ -112,6 +121,13 @@ interface MockAccount {
   principalPath: string
   homePath: string
   displayName: string
+  /**
+   * CALDAV:calendar-user-address-set hrefs (RFC 6638 §2.4.1) the principal
+   * answers with. Omitted: the principal does not report the property.
+   */
+  calendarUserAddresses?: string[]
+  /** DAV:displayname of the principal — the user's name, not a calendar's. */
+  principalDisplayName?: string
   collections: MockCollection[]
 }
 
@@ -121,6 +137,11 @@ const ACCOUNTS: MockAccount[] = [
     principalPath: '/dav/principals/user/',
     homePath: '/dav/calendars/user/',
     displayName: 'Mock CalDAV',
+    // The sabre/dav shape: the principal's own path next to its address. The
+    // path comes first so a client taking the first href, not the first
+    // `mailto:` one, gets caught.
+    calendarUserAddresses: ['/dav/principals/user/', 'mailto:user@example.com'],
+    principalDisplayName: 'Mock User',
     collections: [
       {
         path: '/dav/calendars/user/personal/',
@@ -265,6 +286,14 @@ const ACCOUNTS: MockAccount[] = [
         rejectMixedUids: true,
       },
       {
+        // Owned by `organizer.spec.ts`, which asserts the ORGANIZER of the
+        // events it creates.
+        path: '/dav/calendars/user/organizer/',
+        displayName: 'Organizer',
+        color: '#0891B2',
+        components: ['VEVENT', 'VTODO', 'VJOURNAL'],
+      },
+      {
         // Owned by `unreadable-resource.spec.ts` (issue #228), which seeds a
         // resource that cannot be parsed next to a readable one.
         path: '/dav/calendars/user/unreadable/',
@@ -285,11 +314,20 @@ const ACCOUNTS: MockAccount[] = [
     principalPath: '/dav/principals/userb/',
     homePath: '/dav/calendars/userb/',
     displayName: 'Mock CalDAV B',
+    // The Radicale shape: the set holds the principal's path and no address.
+    calendarUserAddresses: ['/dav/principals/userb/'],
     collections: [
       {
         path: '/dav/calendars/userb/personal/',
         displayName: 'Personal',
         color: '#10B981',
+        components: ['VEVENT', 'VTODO', 'VJOURNAL'],
+      },
+      {
+        // Owned by `organizer.spec.ts`, like `user/organizer/` on account A.
+        path: '/dav/calendars/userb/organizer/',
+        displayName: 'Organizer B',
+        color: '#0891B2',
         components: ['VEVENT', 'VTODO', 'VJOURNAL'],
       },
     ],
@@ -327,6 +365,41 @@ const ACCOUNTS: MockAccount[] = [
         color: '#059669',
         components: ['VEVENT', 'VTODO', 'VJOURNAL'],
         privileges: ['read', 'read-current-user-privilege-set'],
+      },
+      {
+        // What Radicale grants on a calendar shared read-write: write-content,
+        // with no write or all aggregate. Must still be offered as a save
+        // target.
+        path: '/dav/calendars/userc/inc-shared/',
+        displayName: 'Inc Shared',
+        color: '#D97706',
+        components: ['VEVENT', 'VTODO', 'VJOURNAL'],
+        privileges: ['read', 'write-content'],
+      },
+    ],
+  },
+  {
+    // A fourth account for `server-subscriptions.spec.ts` (#237): one ordinary
+    // calendar plus a Radicale-style `VSUBSCRIBED` collection that points at an
+    // external ICS feed and holds no events of its own.
+    mount: '/mock-caldav-sub',
+    principalPath: '/dav/principals/userd/',
+    homePath: '/dav/calendars/userd/',
+    displayName: 'Mock CalDAV Subscriptions',
+    collections: [
+      {
+        path: '/dav/calendars/userd/sub-work/',
+        displayName: 'Sub Work',
+        color: '#2563EB',
+        components: ['VEVENT', 'VTODO', 'VJOURNAL'],
+        privileges: ['read', 'write', 'write-content', 'write-properties', 'bind', 'unbind'],
+      },
+      {
+        path: '/dav/calendars/userd/sub-holidays/',
+        displayName: 'Server Holidays',
+        color: '#DC2626',
+        components: ['VEVENT'],
+        subscribedSource: 'https://feeds.example.test/server-holidays.ics',
       },
     ],
   },
@@ -480,6 +553,9 @@ export function caldavMockPlugin(): Plugin {
             value: c.privileges.map((p) => `<d:privilege><d:${p}/></d:privilege>`).join(''),
             raw: true,
           })
+        }
+        if (c.subscribedSource) {
+          props.push({ name: 'http://calendarserver.org/ns/source', href: c.subscribedSource })
         }
         if (c.isSettings) {
           // Dead-property marker so Calino's `discoverSettingsCalendar`
@@ -653,16 +729,29 @@ export function caldavMockPlugin(): Plugin {
         ])
       }
 
-      // 3) PROPFIND on the principal → calendar-home-set
+      // 3) PROPFIND on the principal → calendar-home-set, and who the user is
       if (path === account.principalPath && method === 'PROPFIND') {
-        return write207([
-          responseTag(absolute(account.principalPath), [
-            {
-              name: 'CAL:calendar-home-set',
-              href: absolute(account.homePath),
-            },
-          ]),
-        ])
+        const principalProps: Array<{
+          name: string
+          href?: string
+          value?: string
+          raw?: boolean
+        }> = [{ name: 'CAL:calendar-home-set', href: absolute(account.homePath) }]
+        if (account.calendarUserAddresses) {
+          principalProps.push({
+            name: 'CAL:calendar-user-address-set',
+            value: account.calendarUserAddresses
+              .map(
+                (href) => `<d:href>${esc(href.startsWith('/') ? absolute(href) : href)}</d:href>`
+              )
+              .join(''),
+            raw: true,
+          })
+        }
+        if (account.principalDisplayName) {
+          principalProps.push({ name: 'DAV:displayname', value: account.principalDisplayName })
+        }
+        return write207([responseTag(absolute(account.principalPath), principalProps)])
       }
 
       // 4) PROPFIND on the calendar home — list every collection of this
@@ -675,7 +764,9 @@ export function caldavMockPlugin(): Plugin {
             responseTag(absolute(c.path), [
               {
                 name: 'DAV:resourcetype',
-                value: '<d:collection/><c:calendar/>',
+                value: c.subscribedSource
+                  ? '<d:collection/><cs:subscribed/>'
+                  : '<d:collection/><c:calendar/>',
                 raw: true,
               },
               ...collectionProps(c),

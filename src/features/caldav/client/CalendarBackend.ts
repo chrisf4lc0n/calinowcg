@@ -1,7 +1,9 @@
 import type {
   CalDAVCalendar,
   CalendarProtocol,
+  CalendarUser,
   CreateCalendarOptions,
+  ServerSubscription,
   UpdateCalendarOptions,
 } from '../types'
 import type { FetchEventsResult, SyncCollectionResult } from './CalDAVClient'
@@ -40,6 +42,12 @@ export interface CalendarBackend {
   watch?(onChange: () => void): () => void
 
   fetchCalendars(): Promise<CalDAVCalendar[]>
+  /**
+   * Collections the server keeps as subscriptions to external ICS feeds. They
+   * are not calendars (no events live on the server), so they are reported
+   * separately and imported as webcal subscriptions. CalDAV only.
+   */
+  fetchSubscribedCollections?(): Promise<ServerSubscription[]>
   fetchEvents(
     calendarUrl: string,
     start: string,
@@ -80,6 +88,12 @@ export interface CalendarBackend {
   deleteSettingsEvent(settingsCalendarUrl: string): Promise<void>
   deleteSettingsCalendar(settingsCalendarUrl: string): Promise<void>
 
+  /**
+   * RFC 6638 §2.4.1 — the signed-in user's calendar user address and name,
+   * read from their principal. Null when the server could not be asked, so a
+   * caller can ask again later. Optional: JMAP has no principal.
+   */
+  fetchCalendarUser?(): Promise<CalendarUser | null>
   supportsScheduling(url?: string): Promise<boolean>
   queryFreeBusy(calendarUrl: string, start: Date, end: Date): Promise<FreeBusyPeriod[] | null>
   queryAttendeeFreeBusy(

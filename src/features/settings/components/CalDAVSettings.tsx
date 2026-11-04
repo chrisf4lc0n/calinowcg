@@ -364,7 +364,7 @@ export function CalDAVSettings({ searchControl }: { searchControl?: JSX.Element 
                     ? t('caldav.syncing')
                     : t('caldav.syncNow')}
                 </button>
-                {!subscription.isPreconfigured && (
+                {!subscription.isPreconfigured && !subscription.serverAccountId && (
                   <button
                     className={styles.disconnect}
                     onClick={() => handleRemoveSubscription(subscription.id)}

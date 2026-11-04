@@ -2,7 +2,9 @@ import { createDAVClient } from 'tsdav'
 import type {
   CalDAVCredentials,
   CalDAVCalendar,
+  CalendarUser,
   CreateCalendarOptions,
+  ServerSubscription,
   UpdateCalendarOptions,
 } from '../types'
 import type { CalendarBackend } from './CalendarBackend'
@@ -148,12 +150,17 @@ function parsePrivileges(raw: unknown): { canWrite: boolean } | null {
   const granted = new Set<string>()
   collectPrivilegeNames(privilege, granted)
   if (granted.size === 0) return null
+  // tsdav camelCases element names (`<write-content/>` arrives as
+  // `writeContent`), so compare without the hyphens. Radicale grants only
+  // `<write-content/>` on a calendar shared read-write, which otherwise reads
+  // as read-only.
+  for (const name of [...granted]) granted.add(name.replace(/-/g, ''))
   const canWrite =
     granted.has('write') ||
     granted.has('all') ||
     granted.has('unlocked') ||
-    granted.has('write-content') ||
-    granted.has('write-properties') ||
+    granted.has('writecontent') ||
+    granted.has('writeproperties') ||
     // A calendar you may add resources to is writable even if the server
     // spells that as bind/unbind rather than as a write aggregate.
     granted.has('bind')
@@ -419,6 +426,61 @@ export class CalDAVClient implements CalendarBackend {
           calendarOrder: Number.isFinite(calendarOrder) ? calendarOrder : undefined,
         }
       })
+  }
+
+  /**
+   * Collections the server holds as subscriptions to an external ICS feed
+   * (Radicale `VSUBSCRIBED`: resourcetype `cs:subscribed`, feed URL in
+   * `cs:source`). tsdav's `fetchCalendars` keeps only `calendar` collections, so
+   * these are invisible to it; one more PROPFIND on the calendar home finds
+   * them. Throws on a failed listing so callers can tell "none" from "unknown".
+   */
+  async fetchSubscribedCollections(): Promise<ServerSubscription[]> {
+    if (!navigator.onLine) {
+      throw new Error('No network connection. Please check your internet connection.')
+    }
+    const client = this.getClient()
+    const homeUrl = await this.findCalendarHome()
+    const responses = await client.propfind({
+      url: homeUrl,
+      depth: '1',
+      props: {
+        'd:resourcetype': {},
+        'd:displayname': {},
+        'ca:calendar-color': {},
+        'cs:source': {},
+      },
+    })
+
+    const subscriptions: ServerSubscription[] = []
+    for (const response of responses) {
+      const props = (response.props ?? {}) as Record<string, unknown>
+      const resourceTypes = props.resourcetype
+      if (resourceTypes == null || typeof resourceTypes !== 'object') continue
+      if (!('subscribed' in resourceTypes)) continue
+
+      // Radicale answers `<CS:source><href>url</href></CS:source>`; tolerate a
+      // bare-text source too.
+      const rawSource = props.source
+      const source =
+        typeof rawSource === 'string'
+          ? rawSource
+          : rawSource != null && typeof rawSource === 'object'
+            ? (rawSource as { href?: unknown }).href
+            : undefined
+      if (typeof source !== 'string' || !source.trim() || !response.href) continue
+
+      subscriptions.push({
+        url: resolveDavHref(homeUrl, response.href),
+        name:
+          typeof props.displayname === 'string' && props.displayname
+            ? props.displayname
+            : 'Subscription',
+        color: normalizeColor(props.calendarColor as string | null | undefined),
+        source: source.trim(),
+      })
+    }
+    return subscriptions
   }
 
   /**
@@ -928,6 +990,73 @@ export class CalDAVClient implements CalendarBackend {
       )
       if (!homeHref) return null
       return resolveDavHref(baseUrl, homeHref)
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * The signed-in user as scheduling knows them: the first `mailto:` entry of
+   * the principal's CALDAV:calendar-user-address-set (RFC 6638 §2.4.1) and its
+   * DAV:displayname, in one PROPFIND.
+   *
+   * The set is unordered and mixes URI schemes: sabre/dav lists `mailto:`
+   * addresses next to the principal URL, and Radicale answers with the
+   * principal path alone — a valid answer meaning "no address", not a
+   * failure. Only a request that could not be made or answered returns null.
+   */
+  async fetchCalendarUser(): Promise<CalendarUser | null> {
+    try {
+      // The stored URL as discovered, trailing slash included: some servers
+      // (Davis) answer PROPFIND only on the slashed form.
+      const principalHref = await this.propfindFirstHref(
+        this.serverUrl,
+        'DAV:',
+        'current-user-principal'
+      )
+      if (!principalHref) return null
+      const principalUrl = resolveDavHref(this.serverUrl, principalHref)
+
+      const response = await this.proxyFetch(principalUrl, {
+        method: 'PROPFIND',
+        headers: {
+          'Content-Type': 'application/xml; charset=utf-8',
+          Authorization: this.authHeader,
+          Depth: '0',
+        },
+        body: `<?xml version="1.0" encoding="UTF-8" ?>
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <c:calendar-user-address-set/>
+    <d:displayname/>
+  </d:prop>
+</d:propfind>`,
+      })
+      if (!response.ok && response.status !== 207) return null
+
+      const doc = this.parseXmlDocument(await response.text())
+      const addressSet = this.firstElementByLocalName(
+        doc,
+        'urn:ietf:params:xml:ns:caldav',
+        'calendar-user-address-set'
+      )
+      const hrefs = addressSet
+        ? Array.from(addressSet.getElementsByTagName('*')).filter((el) => el.localName === 'href')
+        : []
+      const mailto = hrefs
+        .map((el) => el.textContent?.trim() ?? '')
+        .find((href) => /^mailto:[^@\s]+@\S+$/i.test(href))
+
+      const displayName = this.firstElementByLocalName(
+        doc,
+        'DAV:',
+        'displayname'
+      )?.textContent?.trim()
+
+      return {
+        address: mailto ? mailto.slice('mailto:'.length) : null,
+        displayName: displayName || undefined,
+      }
     } catch {
       return null
     }
