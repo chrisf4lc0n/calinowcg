@@ -923,5 +923,21 @@
       "deleting": "正在删除…",
       "dismiss": "忽略"
     }
+  },
+  "serverConfig": {
+    "groupLabel": "服务器配置",
+    "label": "为服务器下载配置",
+    "descWithConfig": "将在此浏览器中添加的账户和日历订阅（.ics）加入服务器配置，并用当前主密码加密。将下载的 calino.config.json 覆盖服务器上的同名文件，然后重新加载 Calino。",
+    "descWithoutConfig": "把当前浏览器中的账户和日历订阅（.ics）生成供服务器使用的 calino.config.json，并用你设定的主密码加密。将其挂载到容器中并重新部署；之后每个浏览器都用该密码解锁它们。",
+    "button": "下载配置",
+    "working": "正在加密…",
+    "passwordLabel": "设置主密码",
+    "repeatLabel": "再次输入主密码",
+    "tooShort": "至少使用 {{min}} 个字符。",
+    "mismatch": "两次输入的密码不一致。",
+    "unlockFirst": "请先用主密码解锁 Calino。",
+    "nothingToExport": "没有可写入配置的账户或日历订阅。",
+    "downloaded": "已下载 calino.config.json。账户：{{accounts}}（新增 {{newAccounts}} 个）。日历订阅：{{feeds}}（新增 {{newFeeds}} 个）。请将其覆盖服务器上的同名文件。",
+    "failed": "无法生成配置：{{message}}"
   }
 }
