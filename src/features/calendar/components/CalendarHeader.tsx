@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useNavigate } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { formatDisplayDate, formatMonthYear } from '@/lib/datetime'
+import { yearComesFirst, dayRangeEndPattern } from '@/lib/datePatterns'
 import { useCalendarStore } from '@/store/calendarStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { QuickSettingsPanel } from './QuickSettingsPanel'
@@ -336,21 +337,29 @@ export function CalendarHeader({
   const getTitle = (): { month: string; year: string } | string => {
     switch (currentView) {
       case 'month':
-        return { month: formatDisplayDate(date, 'MMMM'), year }
+        // Languages that write the year first ("2026年11月") swap the two parts
+        // visually; the year also carries its own unit there.
+        return {
+          month: formatDisplayDate(date, 'MMMM'),
+          year: yearComesFirst() ? `${year}年` : year,
+        }
       case 'year':
         return year
       case 'week': {
         const weekStart = visibleWeekStart
         const weekEnd = addDays(weekStart, 6)
         if (formatDisplayDate(weekStart, 'MMM') === formatDisplayDate(weekEnd, 'MMM')) {
-          return `${formatDisplayDate(weekStart, 'MMM d')} – ${formatDisplayDate(weekEnd, 'd')}`
+          return `${formatDisplayDate(weekStart, 'MMM d')} – ${formatDisplayDate(
+            weekEnd,
+            dayRangeEndPattern()
+          )}`
         }
         return `${formatDisplayDate(weekStart, 'MMM d')} – ${formatDisplayDate(weekEnd, 'MMM d')}`
       }
       case '3day': {
         const end = addDays(date, 2)
         if (formatDisplayDate(date, 'MMM') === formatDisplayDate(end, 'MMM')) {
-          return `${formatDisplayDate(date, 'MMM d')} – ${formatDisplayDate(end, 'd')}`
+          return `${formatDisplayDate(date, 'MMM d')} – ${formatDisplayDate(end, dayRangeEndPattern())}`
         }
         return `${formatDisplayDate(date, 'MMM d')} – ${formatDisplayDate(end, 'MMM d')}`
       }
@@ -584,11 +593,19 @@ export function CalendarHeader({
       {/* Title — click returns to month view from anywhere (jumps to today when
           already in month) */}
       <div
-        className={`${styles.titleGroup} ${currentView === 'week' ? '' : styles.titleClickable}`}
+        className={`${styles.titleGroup} ${currentView === 'week' ? '' : styles.titleClickable} ${
+          typeof title === 'object' && yearComesFirst() ? styles.titleYearFirst : ''
+        }`}
         onClick={currentView === 'week' ? undefined : handleTitleClick}
         role={currentView === 'week' ? undefined : 'button'}
         tabIndex={currentView === 'week' ? undefined : 0}
-        aria-label={currentView === 'week' ? undefined : homeLabel}
+        // The name has to contain the visible title (WCAG 2.5.3, Label in Name), or
+        // a voice-control user who says what they see ("November") can't click it.
+        aria-label={
+          currentView === 'week'
+            ? undefined
+            : `${typeof title === 'object' ? `${title.month} ${title.year}` : title}, ${homeLabel}`
+        }
         title={currentView === 'week' ? undefined : homeLabel}
         onKeyDown={
           currentView === 'week'
@@ -617,6 +634,8 @@ export function CalendarHeader({
             <h1 key={`m${titleAnimKey}`} className={`${styles.monthTitle} ${titleAnimClass}`}>
               {title.month}
             </h1>
+            {/* A real space between the two, so the visible text reads "November 2026"
+                (it is a flex row, so the space itself is not laid out). */}{' '}
             <span key={`y${titleAnimKey}`} className={`${styles.yearTitle} ${titleAnimClass}`}>
               {title.year}
             </span>

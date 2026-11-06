@@ -51,12 +51,16 @@
     },
     "agenda": {
       "emptyTitle": "Niente in programma questo mese",
-      "emptyDescription": "La tua agenda è chiara. Aggiungi un evento per iniziare."
+      "emptyDescription": "La tua agenda è chiara. Aggiungi un evento per iniziare.",
+      "freeDays_one": "{{count}} giorno libero",
+      "freeDays_other": "{{count}} giorni liberi"
     },
     "year": {
       "weekNumber": "Settimana {{number}}"
     },
     "grid": {
+      "weekNumberHeader": "Sett",
+      "weekNumber": "S{{number}}",
       "openDayView": "Apri {{date}} nella vista giorno",
       "hasJournalEntriesFor": "Contiene voci di diario per {{date}}",
       "viewJournalEntries": "Visualizza le voci del diario",
@@ -494,6 +498,14 @@
       "thisOnly_task": "Solo questa attività",
       "thisAndFollowing_event": "Questo e gli eventi successivi",
       "thisAndFollowing_task": "Questa attività e le successive"
+    },
+    "unsavedChangesDialog": {
+      "title": "Salvare le modifiche?",
+      "message": "Le modifiche non sono state salvate.",
+      "save": "Salva",
+      "discard": "Scarta",
+      "discardDescription": "Scarta le modifiche e chiudi",
+      "keepEditing": "Continua a modificare"
     },
     "eventModal": {
       "addressCopied": "Indirizzo copiato",

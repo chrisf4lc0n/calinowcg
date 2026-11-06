@@ -51,12 +51,16 @@
     },
     "agenda": {
       "emptyTitle": "Intet planlagt denne måned",
-      "emptyDescription": "Din dagsorden er tom. Tilføj en begivenhed for at komme i gang."
+      "emptyDescription": "Din dagsorden er tom. Tilføj en begivenhed for at komme i gang.",
+      "freeDays_one": "{{count}} dag fri",
+      "freeDays_other": "{{count}} dage fri"
     },
     "year": {
       "weekNumber": "Uge {{number}}"
     },
     "grid": {
+      "weekNumberHeader": "Uge",
+      "weekNumber": "U{{number}}",
       "openDayView": "Åbn {{date}} i dagsvisning",
       "hasJournalEntriesFor": "Har dagbogsindlæg for {{date}}",
       "viewJournalEntries": "Vis dagbogsindlæg",
@@ -382,6 +386,14 @@
       "thisOnly_task": "Kun denne opgave",
       "thisAndFollowing_event": "Denne og følgende begivenheder",
       "thisAndFollowing_task": "Denne og følgende opgaver"
+    },
+    "unsavedChangesDialog": {
+      "title": "Gem dine ændringer?",
+      "message": "Dine ændringer er ikke gemt.",
+      "save": "Gem",
+      "discard": "Kasser",
+      "discardDescription": "Kasser ændringer og luk",
+      "keepEditing": "Fortsæt redigering"
     },
     "eventModal": {
       "addressCopied": "Tilføjress copied",

@@ -51,12 +51,16 @@
     },
     "agenda": {
       "emptyTitle": "Nothing scheduled this month",
-      "emptyDescription": "Your agenda is clear. Add an event to get started."
+      "emptyDescription": "Your agenda is clear. Add an event to get started.",
+      "freeDays_one": "{{count}} day free",
+      "freeDays_other": "{{count}} days free"
     },
     "year": {
       "weekNumber": "Week {{number}}"
     },
     "grid": {
+      "weekNumberHeader": "W#",
+      "weekNumber": "W{{number}}",
       "openDayView": "Open {{date}} in day view",
       "hasJournalEntriesFor": "Has journal entries for {{date}}",
       "viewJournalEntries": "View journal entries",
@@ -494,6 +498,14 @@
       "thisOnly_task": "This task only",
       "thisAndFollowing_event": "This and following events",
       "thisAndFollowing_task": "This and following tasks"
+    },
+    "unsavedChangesDialog": {
+      "title": "Save your changes?",
+      "message": "Your changes haven’t been saved.",
+      "save": "Save",
+      "discard": "Discard",
+      "discardDescription": "Discard changes and close",
+      "keepEditing": "Keep editing"
     },
     "eventModal": {
       "addressCopied": "Address copied",
