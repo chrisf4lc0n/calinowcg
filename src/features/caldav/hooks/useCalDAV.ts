@@ -65,6 +65,8 @@ import { useCalDAVSyncStore } from '@/store/caldavSyncStore'
 import { useProgressStore, withProgress, isProgressOwned } from '@/store/progressStore'
 import { useConfigStore } from '@/store/configStore'
 import {
+  calendarHasUnsyncedEvents,
+  extendCalendarSelection,
   filterSelectedCalendars,
   preconfiguredSecretHash,
   isSameLogin,
@@ -1075,15 +1077,20 @@ export function useCalDAVInstance(): UseCalDAVReturn {
 
         const discoveredUrl = probe.resolvedUrl ?? serverUrl.replace(/\/$/, '')
 
-        if (
-          options.provisioned &&
-          storage
+        if (options.provisioned) {
+          const existing = storage
             .getAllAccounts()
-            .some((account) => account.serverUrl === discoveredUrl && account.username === username)
-        ) {
-          setSyncState((prev) => ({ ...prev, status: 'idle' }))
-          useCalDAVSyncStore.getState().setStatus('idle')
-          return
+            .find(
+              (account) => account.serverUrl === discoveredUrl && account.username === username
+            )
+          if (existing) {
+            // The login was already connected by hand: register the account
+            // we are about to skip, so the config still tracks it.
+            options.onAccountSaved?.(existing.id)
+            setSyncState((prev) => ({ ...prev, status: 'idle' }))
+            useCalDAVSyncStore.getState().setStatus('idle')
+            return
+          }
         }
 
         const credential = await saveCredentials({
@@ -1592,17 +1599,30 @@ export function useCalDAVInstance(): UseCalDAVReturn {
 
           const storedByUrl = new Map(accountCalendars.map((calendar) => [calendar.url, calendar]))
           const serverUrls = new Set(serverCalendars.map((calendar) => calendar.url))
+          const listedUrls = new Set(listedCalendars.map((calendar) => calendar.url))
           const discoveredCalendars = accountCalendars.filter((calendar) =>
             serverUrls.has(calendar.url)
           )
           const caldavDebugMode = useSettingsStore.getState().caldavDebugMode
 
           // A collection deleted by another CalDAV client must not remain in
-          // the sidebar or be fetched during this sync.
+          // the sidebar or be fetched during this sync. One that is still on
+          // the server but fell out of the config's calendar selection goes
+          // too — unless its local copy still holds events that were never
+          // uploaded, which exist nowhere else; that copy stays until the
+          // selection returns to cover it.
           for (const storedCalendar of accountCalendars) {
-            if (!serverUrls.has(storedCalendar.url)) {
+            if (serverUrls.has(storedCalendar.url)) continue
+            if (
+              !listedUrls.has(storedCalendar.url) ||
+              !calendarHasUnsyncedEvents(useCalendarStore.getState().events, storedCalendar.id)
+            ) {
               storage.deleteCalendar(storedCalendar.id)
               storeDeleteCalendar(storedCalendar.id)
+            } else {
+              console.warn(
+                `[CalDAV] Keeping "${storedCalendar.name}": it left the config selection, but its unsynced changes would be destroyed with it`
+              )
             }
           }
 
@@ -2406,17 +2426,28 @@ export function useCalDAVInstance(): UseCalDAVReturn {
           (id) => registry[id].configUrl === url && registry[id].username === username
         )
 
-      // Drop accounts whose entry is gone from the config.
+      // Drop accounts whose entry is gone from the config. Match by login,
+      // not by the exact config URL: editing an entry's URL (adding a path,
+      // switching to https) keeps the same login and must refresh the account
+      // in place, not delete it and its local events.
+      const urlEdited = new Set<string>()
       for (const id of Object.keys(registry)) {
-        const stillConfigured = entries.some(
+        const entry = registry[id]
+        const account = storage.getAccountById(id)
+        const fresh = entries.find(
           ({ credential }) =>
-            credential.url === registry[id].configUrl &&
-            credential.username === registry[id].username
+            credential.username === entry.username &&
+            (credential.url === entry.configUrl ||
+              (account !== undefined &&
+                isSameLogin(account, credential.url, credential.username)))
         )
-        if (!stillConfigured) {
+        if (!fresh) {
           console.log(`[CalDAV] Removing account no longer in config: ${id}`)
           await removeAccount(id)
           delete registry[id]
+        } else if (fresh.credential.url !== entry.configUrl) {
+          entry.configUrl = fresh.credential.url
+          urlEdited.add(id)
         }
       }
       writePreconfiguredRegistry(registry)
@@ -2430,14 +2461,21 @@ export function useCalDAVInstance(): UseCalDAVReturn {
         // hand for the same login) are adopted, then brought up to date. The
         // stored URL is the resolved one, so match the login, not the string;
         // prefer a copy whose URL is the config's, give or take a slash.
+        // A JMAP account that merely shares the login is not a CalDAV
+        // preconfiguration to adopt — rewriting its URL would break it.
         const untracked = storage
           .getAllAccounts()
-          .filter((a) => !registry[a.id] && isSameLogin(a, url, username))
+          .filter(
+            (a) => !registry[a.id] && a.protocol !== 'jmap' && isSameLogin(a, url, username)
+          )
         if (!accountId) {
           const adopted = untracked.find((a) => isSameUrlPath(a.serverUrl, url)) ?? untracked[0]
           accountId = adopted?.id
           if (accountId) {
             registry[accountId] = { configUrl: url, username, secretHash: '', calendars: undefined }
+            // Persist at once: a failed probe below must not re-adopt (and
+            // re-evaluate) the same account on every load.
+            writePreconfiguredRegistry(registry)
           }
         }
 
@@ -2473,12 +2511,24 @@ export function useCalDAVInstance(): UseCalDAVReturn {
           }
 
           const tracked = registry[accountId]
-          if (tracked.secretHash !== secretHash) {
+          const selectionChanged = !sameCalendarSelection(tracked.calendars, calendars)
+          if (selectionChanged) {
+            console.log(`[CalDAV] Applying calendar selection from config: ${name}`)
+            tracked.calendars = calendars
+            writePreconfiguredRegistry(registry)
+          }
+
+          // updateAccount syncs at the end, so the selection is recorded
+          // first and that sync already sees it. Keep the stored resolved URL
+          // unless the admin edited the entry's URL, in which case re-probe
+          // from the new one.
+          let synced = false
+          if (tracked.secretHash !== secretHash || urlEdited.has(accountId)) {
             console.log(`[CalDAV] Updating preconfigured account from config: ${name}`)
             const account = storage.getAccountById(accountId)
             await updateAccount(accountId, {
               name,
-              serverUrl: url,
+              serverUrl: urlEdited.has(accountId) ? url : (account?.serverUrl ?? url),
               username,
               password,
               proxyUrl: account?.proxyUrl ?? null,
@@ -2486,14 +2536,10 @@ export function useCalDAVInstance(): UseCalDAVReturn {
             })
             tracked.secretHash = secretHash
             writePreconfiguredRegistry(registry)
+            synced = true
           }
 
-          if (!sameCalendarSelection(tracked.calendars, calendars)) {
-            console.log(`[CalDAV] Applying calendar selection from config: ${name}`)
-            tracked.calendars = calendars
-            writePreconfiguredRegistry(registry)
-            await syncAccount(accountId)
-          }
+          if (selectionChanged && !synced) await syncAccount(accountId)
         } catch (err) {
           console.error(`[CalDAV] Failed to apply preconfigured account ${name}:`, err)
         }
@@ -3357,6 +3403,9 @@ export function useCalDAVInstance(): UseCalDAVReturn {
 
       // Save to local storage
       storage.saveCalendar(newCalendar)
+      // A selection-restricted preconfigured account would otherwise drop this
+      // collection at the next sync: it is not in the config's selection.
+      extendCalendarSelection(accountId, { url: newCalendar.url, name: newCalendar.name })
       storeAddCalendar({
         id: newCalendar.id,
         name: newCalendar.name,

@@ -12,6 +12,7 @@ export const STORAGE_KEYS = {
   calendar: 'calino-storage',
   contacts: 'calino-contacts',
   cookieConsent: 'calino_cookie_notice',
+  preconfigured: 'calino.preconfigured.accounts',
 } as const
 
 interface ContactSeed {

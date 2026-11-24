@@ -41,6 +41,20 @@ describe('accountsToAdd', () => {
     )
     expect(picked.map((a) => a.id)).toEqual(['a', 'c'])
   })
+
+  it('never exports a JMAP account into the CalDAV-only config', () => {
+    const accounts = [
+      { id: 'dav', serverUrl: 'https://davis.example.org/dav', username: 'chris' },
+      {
+        id: 'jmap',
+        serverUrl: 'https://jmap.example.org',
+        username: 'chris',
+        protocol: 'jmap',
+      },
+    ]
+    const picked = accountsToAdd(accounts, new Set(), [])
+    expect(picked.map((a) => a.id)).toEqual(['dav'])
+  })
 })
 
 describe('webcalsToAdd', () => {

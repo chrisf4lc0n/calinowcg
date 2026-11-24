@@ -411,6 +411,16 @@ The encryption script (`scripts/encrypt-password.mjs`) and the browser (`src/lib
 6. Auto-connect iterates config accounts sequentially (not concurrently!)
 7. For each account: calls `addAccount()` which discovers server, tests connection, saves credentials, fetches calendars and events
 
+In this fork the effect **reconciles** rather than merely connects: the stored
+accounts are matched to config entries through a localStorage registry
+(`src/lib/preconfiguredAccounts.ts`), so entries whose password, headers or
+name changed update in place, entries removed from the file drop their
+account, untracked or duplicated logins are adopted or pruned, and an entry's
+encrypted `calendars` field restricts which collections sync. A collection
+that falls out of the selection is deleted locally **only if** none of its
+events are unsynced; Calino-created collections join the selection instead.
+`docs/DEPLOY_WITH_GENERATED_CONFIG.md` covers the generator side of that.
+
 ### Critical: Sequential Auto-Connect
 
 The auto-connect loop **must** run sequentially (`await` in a `for` loop), not concurrently. The reason:

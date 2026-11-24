@@ -154,6 +154,41 @@ function isSettingsCalendar(cal: { name: string; url?: string }): boolean {
 }
 
 /**
+ * Whether a stored calendar still holds events that were never uploaded.
+ * Used before dropping a calendar that only fell out of a config selection:
+ * unlike a collection deleted on the server, its unsynced events exist only
+ * here, and deleting the calendar would destroy them.
+ */
+export function calendarHasUnsyncedEvents(
+  events: Array<{ calendarId: string; syncStatus?: string }>,
+  calendarId: string
+): boolean {
+  return events.some(
+    (event) =>
+      event.calendarId === calendarId && event.syncStatus !== undefined && event.syncStatus !== 'synced'
+  )
+}
+
+/**
+ * A collection created in Calino on a selection-restricted preconfigured
+ * account must join its selection, or the next sync treats it as deselected
+ * and drops the local copy of a collection that lives on the server.
+ * Returns true when a restricted selection was extended.
+ */
+export function extendCalendarSelection(
+  accountId: string,
+  entry: CalendarSelectionEntry
+): boolean {
+  const registry = readPreconfiguredRegistry()
+  const tracked = registry[accountId]
+  if (!tracked?.calendars) return false
+  if (tracked.calendars.some((c) => c.url === entry.url)) return false
+  tracked.calendars = [...tracked.calendars, entry]
+  writePreconfiguredRegistry(registry)
+  return true
+}
+
+/**
  * The server calendars an account should keep, given its selection. Without a
  * selection every calendar is kept. The hidden Calino Settings calendar is
  * always kept, since settings sync depends on it.

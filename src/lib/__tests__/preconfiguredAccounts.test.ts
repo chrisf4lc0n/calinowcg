@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createLocalStorageMock } from '@/test/storageMock'
 import {
   calendarPath,
+  calendarHasUnsyncedEvents,
+  extendCalendarSelection,
   filterSelectedCalendars,
   isSameLogin,
   isSameUrlPath,
@@ -132,5 +134,68 @@ describe('removableDuplicates', () => {
   it('treats a failed upload as unsynced too', () => {
     const events = [{ calendarId: 'b-cal', syncStatus: 'failed' }]
     expect(removableDuplicates([{ id: 'a' }, { id: 'b' }], 'a', calendarsOf, events)).toEqual([])
+  })
+})
+
+describe('calendarHasUnsyncedEvents', () => {
+  it('flags a calendar with a pending change', () => {
+    const events = [{ calendarId: 'c1', syncStatus: 'pending' }]
+    expect(calendarHasUnsyncedEvents(events, 'c1')).toBe(true)
+  })
+
+  it('flags a calendar with a failed upload', () => {
+    const events = [{ calendarId: 'c1', syncStatus: 'failed' }]
+    expect(calendarHasUnsyncedEvents(events, 'c1')).toBe(true)
+  })
+
+  it('does not flag a fully synced calendar', () => {
+    const events = [{ calendarId: 'c1', syncStatus: 'synced' }]
+    expect(calendarHasUnsyncedEvents(events, 'c1')).toBe(false)
+  })
+})
+
+describe('extendCalendarSelection', () => {
+  it('adds a collection to a restricted selection and persists it', () => {
+    writePreconfiguredRegistry({
+      a1: {
+        configUrl: 'https://dav.example.com/dav',
+        username: 'me',
+        secretHash: 'x',
+        calendars: [{ url: 'https://dav.example.com/dav/work/', name: 'Work' }],
+      },
+    })
+    const added = extendCalendarSelection('a1', {
+      url: 'https://dav.example.com/dav/journal/',
+      name: 'Journal',
+    })
+    expect(added).toBe(true)
+    expect(readPreconfiguredRegistry().a1.calendars?.map((c) => c.name)).toEqual([
+      'Work',
+      'Journal',
+    ])
+  })
+
+  it('is a no-op when the account has no selection', () => {
+    writePreconfiguredRegistry({
+      a1: { configUrl: 'https://dav.example.com/dav', username: 'me', secretHash: 'x' },
+    })
+    expect(
+      extendCalendarSelection('a1', { url: 'https://dav.example.com/dav/new/', name: 'New' })
+    ).toBe(false)
+    expect(readPreconfiguredRegistry().a1.calendars).toBeUndefined()
+  })
+
+  it('is idempotent on a known URL', () => {
+    const entry = { url: 'https://dav.example.com/dav/work/', name: 'Work' }
+    writePreconfiguredRegistry({
+      a1: {
+        configUrl: 'https://dav.example.com/dav',
+        username: 'me',
+        secretHash: 'x',
+        calendars: [entry],
+      },
+    })
+    expect(extendCalendarSelection('a1', entry)).toBe(false)
+    expect(readPreconfiguredRegistry().a1.calendars).toHaveLength(1)
   })
 })

@@ -46,16 +46,16 @@ export function extraConfigFields(raw: unknown): Record<string, unknown> {
 /**
  * The browser's accounts that the config doesn't have yet: not connected from
  * the config (`trackedIds`), not the same login as a config entry, and not a
- * second copy of a login already picked.
+ * second copy of a login already picked. JMAP accounts are skipped: the config
+ * schema is CalDAV-only, so exporting one would make every later load fail.
  */
-export function accountsToAdd<T extends { id: string; serverUrl: string; username: string }>(
-  accounts: T[],
-  trackedIds: Set<string>,
-  configLogins: Array<{ url: string; username: string }>
-): T[] {
+export function accountsToAdd<
+  T extends { id: string; serverUrl: string; username: string; protocol?: string },
+>(accounts: T[], trackedIds: Set<string>, configLogins: Array<{ url: string; username: string }>): T[] {
   const picked: T[] = []
   for (const account of accounts) {
     if (trackedIds.has(account.id)) continue
+    if (account.protocol === 'jmap') continue
     if (configLogins.some((c) => isSameLogin(account, c.url, c.username))) continue
     if (picked.some((p) => isSameLogin(account, p.serverUrl, p.username))) continue
     picked.push(account)

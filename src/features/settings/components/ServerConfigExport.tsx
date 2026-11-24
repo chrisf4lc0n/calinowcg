@@ -35,6 +35,25 @@ async function fetchServedConfig(): Promise<unknown> {
   }
 }
 
+/**
+ * Fields beyond version/accounts/webcalSubscriptions to carry into the
+ * download. Normally taken from the served file verbatim; when that file is
+ * gated behind a sign-in the anonymous fetch fails, so fall back to what the
+ * app itself loaded — otherwise a quick-start config would lose its
+ * one-password unlock and any link schemes would disappear.
+ */
+async function carriedConfigFields(): Promise<Record<string, unknown>> {
+  const raw = await fetchServedConfig()
+  if (raw !== null) return extraConfigFields(raw)
+  const state = useConfigStore.getState()
+  return {
+    ...(state.config?.unlockWithSignIn ? { unlockWithSignIn: true } : {}),
+    ...(state.linkSchemes && Object.keys(state.linkSchemes).length
+      ? { linkSchemes: state.linkSchemes }
+      : {}),
+  }
+}
+
 function download(json: string): void {
   const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
   const a = document.createElement('a')
@@ -102,7 +121,7 @@ export function ServerConfigExport({
       const result = await buildServerConfig(
         {
           existing: config,
-          extra: hasConfig ? extraConfigFields(await fetchServedConfig()) : {},
+          extra: hasConfig ? await carriedConfigFields() : {},
           accounts: plainAccounts,
           webcals: newWebcals,
         },
