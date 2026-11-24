@@ -64,6 +64,17 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { useCalDAVSyncStore } from '@/store/caldavSyncStore'
 import { useProgressStore, withProgress, isProgressOwned } from '@/store/progressStore'
 import { useConfigStore } from '@/store/configStore'
+import {
+  filterSelectedCalendars,
+  preconfiguredSecretHash,
+  isSameLogin,
+  isSameUrlPath,
+  readPreconfiguredRegistry,
+  removableDuplicates,
+  sameCalendarSelection,
+  writePreconfiguredRegistry,
+  type CalendarSelectionEntry,
+} from '@/lib/preconfiguredAccounts'
 import { createUuid } from '@/lib/uuid'
 import { EVENT_COLORS } from '@/store/settingsStore'
 import {
@@ -389,6 +400,10 @@ function tracked<A extends unknown[], R>(
 export interface AddAccountOptions extends ConnectionOptions {
   onProtocolDetected?: (protocol: CalendarProtocol) => void
   provisioned?: boolean
+  /** Calendars to sync for a preconfigured account; absent means all. */
+  calendarSelection?: CalendarSelectionEntry[]
+  /** Called with the new account id right after it is stored. */
+  onAccountSaved?: (accountId: string) => void
 }
 
 export interface UseCalDAVReturn {
@@ -1089,7 +1104,12 @@ export function useCalDAVInstance(): UseCalDAVReturn {
         )
         reportProgress({ label: i18n.t('caldav:progress.lookingForCalendars') })
         console.log('[CalDAV] addAccount: fetching calendars...')
-        const serverCalendars = await client.fetchCalendars()
+        const allServerCalendars = await client.fetchCalendars()
+        const serverCalendars = filterSelectedCalendars(
+          allServerCalendars,
+          undefined,
+          options.calendarSelection
+        )
         console.log('[CalDAV] addAccount: found', serverCalendars.length, 'calendars')
 
         const newAccount = storage.saveAccount({
@@ -1102,6 +1122,7 @@ export function useCalDAVInstance(): UseCalDAVReturn {
           ...(options.provisioned ? { provisionedServerUrl: serverUrl } : {}),
         })
         await rememberCalendarUser(client, newAccount.id)
+        options.onAccountSaved?.(newAccount.id)
 
         for (const cal of serverCalendars) {
           // Store the collection without its change cursors. The tokens the
@@ -1520,7 +1541,7 @@ export function useCalDAVInstance(): UseCalDAVReturn {
         // Re-discover collections on every sync. This migrates capabilities
         // saved by older versions and picks up calendars created elsewhere.
         try {
-          const serverCalendars = await client.fetchCalendars()
+          const listedCalendars = await client.fetchCalendars()
 
           // A PROPFIND that comes back empty almost always means a transient
           // failure, an auth/scope hiccup, or a misbehaving server response —
@@ -1528,11 +1549,15 @@ export function useCalDAVInstance(): UseCalDAVReturn {
           // would wipe out every local calendar and all of their events in one
           // sync. Bail out of reconciliation for this cycle instead; it will be
           // retried on the next sync.
-          if (serverCalendars.length === 0 && accountCalendars.length > 0) {
+          if (listedCalendars.length === 0 && accountCalendars.length > 0) {
             throw new Error(
               'Server returned zero calendars; refusing to treat this as an authoritative listing'
             )
           }
+
+          // Calendars left out of a preconfigured account's selection are
+          // treated as absent: dropped if stored, never added.
+          const serverCalendars = filterSelectedCalendars(listedCalendars, accountId)
 
           // Collections the server holds as external-feed subscriptions are
           // invisible to fetchCalendars; mirror them as webcal subscriptions.
@@ -2276,7 +2301,7 @@ export function useCalDAVInstance(): UseCalDAVReturn {
             proxyUrl,
             account.protocol
           )
-          const serverCalendars = await client.fetchCalendars()
+          const serverCalendars = filterSelectedCalendars(await client.fetchCalendars(), accountId)
 
           const storedCalendars = storage.getCalendarsByAccountId(accountId)
           const serverUrls = new Set(serverCalendars.map((c) => c.url))
@@ -2327,17 +2352,24 @@ export function useCalDAVInstance(): UseCalDAVReturn {
     [syncAccount, storeAddCalendar, storeDeleteCalendar]
   )
 
-  // Auto-connect to preconfigured accounts when unlocked
+  // Bring the stored accounts in line with calino.config.json once it is
+  // unlocked. The config is read at runtime and may have changed since the
+  // last visit: entries that were removed drop their account, entries whose
+  // password, headers, name or calendar selection changed update their
+  // account in place, and new entries are connected.
   const isUnlocked = useConfigStore((state) => state.isUnlocked)
   const hasPreconfiguredAccounts = useConfigStore((state) => state.hasPreconfiguredAccounts)
 
   useEffect(() => {
-    if (!isUnlocked || !hasPreconfiguredAccounts || autoConnectDone) {
+    // Runs even when the config lists no accounts (only webcal feeds): the
+    // accounts an earlier config added must then be removed.
+    if (!isUnlocked || autoConnectDone) {
       return
     }
 
     const { config, getDecryptedCredentials } = useConfigStore.getState()
     if (!config) return
+    if (!hasPreconfiguredAccounts && Object.keys(readPreconfiguredRegistry()).length === 0) return
 
     // Mark immediately to prevent any re-runs across all hook instances
     autoConnectDone = true
@@ -2345,62 +2377,125 @@ export function useCalDAVInstance(): UseCalDAVReturn {
     const decrypted = getDecryptedCredentials()
 
     // Run sequentially to avoid localStorage race conditions in saveCredentials
-    const connectAccounts = async (): Promise<void> => {
+    const reconcileAccounts = async (): Promise<void> => {
+      const registry = readPreconfiguredRegistry()
+      const existingIds = new Set(storage.getAllAccounts().map((a) => a.id))
+
+      // Forget accounts the user removed by hand.
+      for (const id of Object.keys(registry)) {
+        if (!existingIds.has(id)) delete registry[id]
+      }
+
+      const entries = await Promise.all(
+        decrypted.map(async (credential, i) => {
+          const name = config.accounts[i]?.name ?? credential.username
+          return {
+            credential,
+            name,
+            secretHash: await preconfiguredSecretHash({
+              name,
+              password: credential.password,
+              customHeaders: credential.customHeaders,
+            }),
+          }
+        })
+      )
+
+      const findTracked = (url: string, username: string): string | undefined =>
+        Object.keys(registry).find(
+          (id) => registry[id].configUrl === url && registry[id].username === username
+        )
+
+      // Drop accounts whose entry is gone from the config.
+      for (const id of Object.keys(registry)) {
+        const stillConfigured = entries.some(
+          ({ credential }) =>
+            credential.url === registry[id].configUrl &&
+            credential.username === registry[id].username
+        )
+        if (!stillConfigured) {
+          console.log(`[CalDAV] Removing account no longer in config: ${id}`)
+          await removeAccount(id)
+          delete registry[id]
+        }
+      }
+      writePreconfiguredRegistry(registry)
+
       let connected = 0
-      for (let i = 0; i < decrypted.length; i++) {
-        const credential = decrypted[i]
-        const accountName = config.accounts[i]?.name ?? credential.username
+      for (const { credential, name, secretHash } of entries) {
+        const { url, username, password, customHeaders, calendars } = credential
+        let accountId = findTracked(url, username)
+
+        // Accounts connected before this bookkeeping existed (or added by
+        // hand for the same login) are adopted, then brought up to date. The
+        // stored URL is the resolved one, so match the login, not the string;
+        // prefer a copy whose URL is the config's, give or take a slash.
+        const untracked = storage
+          .getAllAccounts()
+          .filter((a) => !registry[a.id] && isSameLogin(a, url, username))
+        if (!accountId) {
+          const adopted = untracked.find((a) => isSameUrlPath(a.serverUrl, url)) ?? untracked[0]
+          accountId = adopted?.id
+          if (accountId) {
+            registry[accountId] = { configUrl: url, username, secretHash: '', calendars: undefined }
+          }
+        }
+
+        // Older builds compared those strings and added the login again on
+        // every page load. Drop the extra copies, except one still holding
+        // changes that never reached the server.
+        const removable = removableDuplicates(
+          untracked,
+          accountId,
+          (id) => storage.getCalendarsByAccountId(id).map((c) => c.id),
+          useCalendarStore.getState().events
+        )
+        for (const id of removable) {
+          console.log(`[CalDAV] Removing duplicate of preconfigured account: ${id}`)
+          await removeAccount(id)
+        }
 
         try {
-          const accounts = storage.getAllAccounts()
-          const managed = accounts.find(
-            (account) =>
-              account.provisionedServerUrl === credential.url &&
-              account.username === credential.username
-          )
-          if (managed) {
-            const current = await getCredentialById(managed.credentialId)
-            const headers = credential.customHeaders ?? {}
-            const oldHeaders = current?.customHeaders ?? {}
-            const headersChanged =
-              Object.keys(headers).length !== Object.keys(oldHeaders).length ||
-              Object.entries(headers).some(([name, value]) => oldHeaders[name] !== value)
-            if (
-              current?.password !== credential.password ||
-              headersChanged ||
-              managed.name !== accountName
-            ) {
-              await updateAccount(managed.id, {
-                name: accountName,
-                serverUrl: managed.serverUrl,
-                username: managed.username,
-                password: credential.password,
-                proxyUrl: managed.proxyUrl,
-                customHeaders: headers,
-              })
-            }
+          if (!accountId) {
+            console.log(`[CalDAV] Auto-connecting to preconfigured account: ${name}`)
+            await addAccount(url, username, password, name, undefined, customHeaders, {
+              provisioned: true,
+              calendarSelection: calendars,
+              // Registered before addAccount returns: a background sync of the
+              // new account must already see its calendar selection.
+              onAccountSaved: (id) => {
+                registry[id] = { configUrl: url, username, secretHash, calendars }
+                writePreconfiguredRegistry(registry)
+              },
+            })
+            connected++
             continue
           }
-          if (
-            accounts.some(
-              (account) =>
-                account.serverUrl === credential.url && account.username === credential.username
-            )
-          )
-            continue
 
-          await addAccount(
-            credential.url,
-            credential.username,
-            credential.password,
-            accountName,
-            undefined,
-            credential.customHeaders,
-            { provisioned: true }
-          )
-          if (storage.getAllAccounts().length > accounts.length) connected++
+          const tracked = registry[accountId]
+          if (tracked.secretHash !== secretHash) {
+            console.log(`[CalDAV] Updating preconfigured account from config: ${name}`)
+            const account = storage.getAccountById(accountId)
+            await updateAccount(accountId, {
+              name,
+              serverUrl: url,
+              username,
+              password,
+              proxyUrl: account?.proxyUrl ?? null,
+              customHeaders,
+            })
+            tracked.secretHash = secretHash
+            writePreconfiguredRegistry(registry)
+          }
+
+          if (!sameCalendarSelection(tracked.calendars, calendars)) {
+            console.log(`[CalDAV] Applying calendar selection from config: ${name}`)
+            tracked.calendars = calendars
+            writePreconfiguredRegistry(registry)
+            await syncAccount(accountId)
+          }
         } catch (err) {
-          console.error(`[CalDAV] Failed to apply preconfigured account ${accountName}:`, err)
+          console.error(`[CalDAV] Failed to apply preconfigured account ${name}:`, err)
         }
       }
 
@@ -2413,8 +2508,9 @@ export function useCalDAVInstance(): UseCalDAVReturn {
         }
       }
     }
-    connectAccounts()
-  }, [addAccount, updateAccount, isUnlocked, hasPreconfiguredAccounts])
+    reconcileAccounts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isUnlocked, hasPreconfiguredAccounts])
 
   const syncAll = useCallback(async (): Promise<void> => {
     // One account failing must not prevent the rest from syncing: runSyncAccount
