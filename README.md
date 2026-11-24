@@ -1,4 +1,10 @@
-# Calino
+# Calino WCG
+
+Calino with a config generator: a fork of
+[Calino](https://github.com/Ivan-Malinovski/calino) for easy, repeatable
+deployment with Docker Compose or Portainer.
+
+Thanks to Ivan Malinovski for all his hard work on Calino.
 
 **A lightweight CalDAV calendar for the web.**
 
@@ -34,6 +40,8 @@ Calino also supports [JMAP](https://jmap.io/) for calendars and contacts. There 
 Due to the browser-based nature of Calino, a web CalDAV/CardDAV/JMAP server must allow requests from your Calino origin with CORS headers. If that's not an option, you can use a proxy URL during setup; Calino provides `https://proxy.calino.io` as a convenience.
 
 With a proxy, requests pass through the proxy operator, so use your own proxy or configure CORS directly when that matters. The hosted proxy sees connection metadata and request URLs, but is designed not to log credentials or calendar bodies. See [`docs/CORS_PROXY.md`](./docs/CORS_PROXY.md) for the hosted proxy's limits and self-hosting options.
+
+Running Nginx Proxy Manager? [`docs/NGINX_PROXY_MANAGER.md`](./docs/NGINX_PROXY_MANAGER.md) has the CORS snippet for your DAV server's proxy host, and how to put Calino behind an Authelia login.
 
 ### DAV behind an authentication gateway
 
@@ -117,11 +125,11 @@ For notification reminders to actually fire reliably, some phone makers (Xiaomi/
 
 ### Security and privacy
 - **Local-first storage.** Calendar data, settings, contacts, and credentials are stored in the browser/device storage. Large attachments, photos, and raw ICS data use IndexedDB.
-- **Credential warning.** Calino obfuscates saved browser credentials with a key bundled with the app. The `/setup` wizard encrypts deployment configs separately with a password you choose.
+- **Credential warning.** Calino obfuscates saved browser credentials with a key bundled with the app. The `/setup` wizard encrypts deployment configs separately with a password you choose, and the Docker image can additionally gate the config file behind a sign-in.
 - **No tracking analytics.** Calino does not include telemetry or analytics. Network requests can still go to the CalDAV/CardDAV servers, webcal feeds, configured proxy, optional map/font services, and an AI provider when those features are used.
 - **Serverless by design.** The hosted app has no Calino account database or application backend; your configured integrations still have their own operators and privacy policies.
 - **Docker hardening.** The bundled production image uses Caddy with security headers and container hardening; see [`docs/DOCKER.md`](./docs/DOCKER.md).
-- **Self-hosted account preloading.** Ship Calino with preconfigured CalDAV accounts protected by a master password. Generate the config via the browser-based `/setup` wizard — no Node.js required. See [`docs/SELF_HOSTED_CONFIG.md`](./docs/SELF_HOSTED_CONFIG.md)
+- **Self-hosted account preloading.** Ship Calino with preconfigured CalDAV accounts protected by a master password. Generate the config with `scripts/calino-config.mjs` (or the browser-based `/setup` page) and mount it into the container; changes apply on the next page load. See [Self-hosting with Docker](#self-hosting-with-docker).
 
 ### Limitations
 - No enterprise features
@@ -130,37 +138,117 @@ For notification reminders to actually fire reliably, some phone makers (Xiaomi/
 
 ---
 
-## Self-hosting quick start
+## Self-hosting with Docker
+
+### With your accounts set up in advance (recommended)
+
+Generate an encrypted config with your CalDAV/CardDAV accounts and mount it
+into the prebuilt image. Users then type one
+master password, and every account, chosen calendar and `.ics` feed connects
+by itself. Changing accounts later needs no rebuild.
+
+```bash
+# Make the deployment folder and download the generator and Compose file
+sudo mkdir -p /opt/calino
+sudo chown "$(id -u):$(id -g)" /opt/calino
+cd /opt/calino
+curl -fsSLO https://raw.githubusercontent.com/chrisf4lc0n/calinowcg/main/scripts/calino-config.mjs
+curl -fsSL -o docker-compose.yml https://raw.githubusercontent.com/chrisf4lc0n/calinowcg/main/deploy/portainer-stack.yml
+
+# Generate the config (asks for each account, tests it, lets you pick calendars)
+docker run --rm -it --network host --user "$(id -u):$(id -g)" \
+  -v /opt/calino:/work -w /work node:22-alpine \
+  node calino-config.mjs --out /work/calino.config.json
+
+# Start Calino with the config mounted
+cat > .env <<'EOF'
+CALINO_CONFIG_FILE=/opt/calino/calino.config.json
+CALINO_IMAGE=ghcr.io/chrisf4lc0n/calinowcg:latest
+CALINO_PORT=8080
+EOF
+docker compose up -d
+```
+
+Open http://localhost:8080 and enter the master password. To change accounts,
+run the same generator command again and reload the page. `/opt/calino` is
+only an example path; use any folder, as long as you change it everywhere.
+
+#### Adding accounts from the browser
+
+Accounts and calendar feeds added under **Settings → Sync** (**Add calendar
+account**, **Subscribe to calendar (.ics)**) normally live only in that
+browser. To share them through the server, open **Settings → Sync → Server
+config** and click **Download config**:
+
+- **With a config already mounted**, the download is your current config plus
+  the browser's new accounts and feeds, encrypted with the same master
+  password. Copy it over the file on the server, then restart the container
+  (or just reload the page if you overwrote the file in place). Every browser
+  then gets the new calendars.
+- **Without a config yet** (the container started without one), you choose a
+  master password and the download holds everything in the browser. Put it in
+  `/opt/calino`, point the stack at it with `CALINO_CONFIG_FILE`, and redeploy.
+  Calino then asks for that master password and takes over the existing
+  accounts instead of adding them twice.
+
+Accounts added this way sync all their calendars; run the generator on the
+file to pick calendars. The full steps are in the guide below.
+
+**[`docs/DEPLOY_WITH_GENERATED_CONFIG.md`](./docs/DEPLOY_WITH_GENERATED_CONFIG.md)
+is the full step-by-step guide**: every generator question, how to check each
+step, access from other devices, HTTPS, and troubleshooting. For Portainer,
+see [`docs/PORTAINER.md`](./docs/PORTAINER.md).
+
+How it works:
+
+- **Runtime config.** A self-hosted build reads `calino.config.json` from the
+  server on every page load. The container serves the file mounted at
+  `/calino/calino.config.json` with `Cache-Control: no-store`. A mounted file
+  takes precedence over one baked into the bundle at build time.
+- **Config generator.** [`scripts/calino-config.mjs`](./scripts/calino-config.mjs)
+  is a single-file Node.js script with no dependencies. It tests each login,
+  lists the calendars it finds, lets you choose which to sync, adds optional
+  `.ics` feeds, and encrypts everything with the master password. Run it
+  again on the same file to edit it.
+- **Config changes sync.** On the next page load, Calino adds new accounts,
+  updates changed ones (password, headers, name, calendar selection) and
+  removes accounts that are no longer in the file.
+- **Prebuilt image.** `ghcr.io/chrisf4lc0n/calinowcg:latest` (amd64 and arm64)
+  is built from every push to `main` by
+  [`.github/workflows/publish-image.yml`](./.github/workflows/publish-image.yml),
+  with a `sha-` tag per build. To build it yourself instead, run
+  `docker build -t calino:local .` in a clone and set `CALINO_IMAGE=calino:local`.
+  The upstream image `ghcr.io/ivan-malinovski/calino` reads a mounted config
+  from its next release on, but keeps it private by default; the generator
+  flow in this guide also works against it with `CALINO_CONFIG_ALLOW_PUBLIC=true`.
+
+You can also make the config in a browser at `/setup` on any running Calino —
+including upstream's **Download Compose file** one-password quick start and
+its per-user deployments. See
+[`docs/SELF_HOSTED_CONFIG.md`](./docs/SELF_HOSTED_CONFIG.md) for the
+options and the encryption details.
+
+### Without preconfigured accounts
+
+```bash
+docker run -d --name calino --restart unless-stopped -p 8080:8080 \
+  ghcr.io/chrisf4lc0n/calinowcg:latest
+```
+
+Calino runs at http://localhost:8080, and each user adds their own accounts in
+**Settings**. To build from a clone instead, run `docker compose up -d --build`,
+which uses `docker-compose.yml`. Site URL, offline support and the other build settings
+are in [`docs/DOCKER.md`](./docs/DOCKER.md).
+
+### Run from source (development)
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-Open http://localhost:5173. The Vite dev server is intended for development; use the production build or Docker for a deployment.
-
-## Docker
-
-The fastest way to self-host. Pre-built multi-arch images (amd64 + arm64) are on GHCR:
-
-```bash
-docker run -d -p 8080:8080 ghcr.io/ivan-malinovski/calino:latest
-```
-
-> **Tip:** `:latest` and `:main` point to the latest stable release published from a version tag. Pin a version tag without the leading `v` (for example `:0.30.0`) when you need a fixed image.
-
-Or clone and customize:
-
-```bash
-git clone https://github.com/Ivan-Malinovski/calino.git
-cd calino
-docker compose up -d
-```
-
-Calino runs at http://localhost:8080 by default.
-To customize settings (site URL, offline support), create a `.env` file — see [`docs/DOCKER.md`](./docs/DOCKER.md) for full details.
-
-**Recommended for new Docker installs with preconfigured accounts:** Open `/setup` and select **Download Compose file** for a single-user deployment with one password. Mount the separate JSON export for shared configs or per-user deployments. Both load the config at runtime. See the [self-hosting guide](./docs/SELF_HOSTED_CONFIG.md) for deployment and migration instructions.
+Open http://localhost:5173. The Vite dev server is for development only; use
+Docker or the production build to deploy.
 
 ## No-Docker
 

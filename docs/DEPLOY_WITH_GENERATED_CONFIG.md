@@ -314,9 +314,36 @@ The same thing as a single command, without Compose:
 
 ```bash
 docker run -d --name calino --restart unless-stopped -p 8080:8080 \
+  -e CALINO_CONFIG_ALLOW_PUBLIC=true \
   -v /opt/calino/calino.config.json:/calino/calino.config.json:ro \
   ghcr.io/chrisf4lc0n/calinowcg:latest
 ```
+
+### Who can read the config file (optional)
+
+The image keeps the mounted config private by default; this stack sets
+`CALINO_CONFIG_ALLOW_PUBLIC=true` in `.env`, because the generator already
+encrypted every sensitive field with the master password — an attacker who
+reads the file over the network still cannot use it. To make Calino ask for
+a sign-in before the file is served at all, put a username and a Caddy
+password hash in `/opt/calino/.env` and turn the public flag off:
+
+```bash
+CALINO_CONFIG_ALLOW_PUBLIC=false
+CALINO_CONFIG_AUTH_USER=calino
+CALINO_CONFIG_AUTH_HASH=<paste the output of:
+  docker run --rm ghcr.io/chrisf4lc0n/calinowcg caddy hash-password --plaintext 'yourpassword'>
+```
+
+`CALINO_CONFIG_AUTH_HASH` starts with `$`, and Compose interpolates `$` in
+`.env` values — double each `$` to `$$` in the file, or leave the hash in the
+stack's environment instead. After `docker compose up -d`, Calino shows its
+own sign-in form on every new browser. The master password still unlocks the
+accounts inside; this gate only guards the encrypted file.
+
+One config per Calino user (upstream's per-user mode) is described in
+[docs/SELF_HOSTED_CONFIG.md](SELF_HOSTED_CONFIG.md); it needs a mounted
+directory instead of a single file, so it replaces this guide's volume line.
 
 ### Using Portainer instead
 
@@ -532,7 +559,7 @@ so updates keep it.
 
 | What you see | Cause and fix |
 |---|---|
-| No master password box; Calino shows its normal welcome screen | The config isn't reaching the app. Run `curl -sI http://localhost:8080/calino.config.json`. On `404`, check `CALINO_CONFIG_FILE` in `/opt/calino/.env`. Also check that `CALINO_IMAGE` is `ghcr.io/chrisf4lc0n/calinowcg`, not the upstream image |
+| No master password box; Calino shows its normal welcome screen | The config isn't reaching the app. Run `curl -sI http://localhost:8080/calino.config.json`. On `404`, check `CALINO_CONFIG_FILE` in `/opt/calino/.env`, and that `CALINO_CONFIG_ALLOW_PUBLIC=true` is still set unless you added the sign-in gate. Also check that `CALINO_IMAGE` is `ghcr.io/chrisf4lc0n/calinowcg`, not the upstream image |
 | `ls -l` shows `/opt/calino/calino.config.json` is a directory | The container started before the file existed. Run `cd /opt/calino && docker compose down && rmdir calino.config.json`, then do Step 3 and Step 4 again |
 | Portainer: the stack fails with `required variable CALINO_CONFIG_FILE is missing a value` | The stack has no `CALINO_CONFIG_FILE` variable, or it is misspelled. Open the stack → **Editor**, add it, and click **Update the stack** |
 | **Download config** says "Unlock Calino with the master password first." | The server serves a config that this browser hasn't unlocked. Enter the master password in the prompt, then download again |

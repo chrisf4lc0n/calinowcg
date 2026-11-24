@@ -12,6 +12,14 @@
 #                       pins one build, calino:local uses one you built
 #   CALINO_PORT         host port, default 8080
 #
+# The image keeps the mounted config private by default. This stack sets
+# CALINO_CONFIG_ALLOW_PUBLIC=true because the generator's file is already
+# encrypted field by field with the master password. To also require a
+# sign-in before the file is served, set CALINO_CONFIG_ALLOW_PUBLIC=false
+# plus CALINO_CONFIG_AUTH_USER and CALINO_CONFIG_AUTH_HASH (see
+# docs/DEPLOY_WITH_GENERATED_CONFIG.md). For one config per Calino user,
+# mount a directory at /calino instead and see docs/SELF_HOSTED_CONFIG.md.
+#
 # To change accounts or calendars: re-run the generator on the same file and
 # reload the page. The file is read on every load; no restart is needed.
 services:
@@ -19,6 +27,11 @@ services:
     image: ${CALINO_IMAGE:-ghcr.io/chrisf4lc0n/calinowcg:latest}
     ports:
       - "${CALINO_PORT:-8080}:8080"
+    environment:
+      CALINO_CONFIG_ALLOW_PUBLIC: ${CALINO_CONFIG_ALLOW_PUBLIC:-true}
+      CALINO_CONFIG_PER_USER: ${CALINO_CONFIG_PER_USER:-false}
+      CALINO_CONFIG_AUTH_USER: ${CALINO_CONFIG_AUTH_USER:-}
+      CALINO_CONFIG_AUTH_HASH: ${CALINO_CONFIG_AUTH_HASH:-}
     volumes:
       - ${CALINO_CONFIG_FILE:?Set CALINO_CONFIG_FILE to the host path of calino.config.json}:/calino/calino.config.json:ro
     restart: unless-stopped
