@@ -50,3 +50,9 @@ layouts. Vitest excludes E2E files and runs its unit tests in both
   `CALINO_TEST_CALDAV_USER`, and `CALINO_TEST_CALDAV_PASS`. Never hard-code
   credentials. The gitignored `e2e/.env.test` is only a local reference and is
   not loaded automatically by Playwright.
+- Alpine/musl hosts cannot run Playwright's downloaded browsers. Set
+  `E2E_CHROMIUM_PATH=/path/to/chromium` to point the chromium project at a
+  system (musl) Chromium — export whatever `LD_LIBRARY_PATH` and
+  `FONTCONFIG_FILE` that build needs (missing fontconfig makes the renderer
+  crash on text input). The firefox and webkit projects stay unavailable
+  there; run them on a glibc machine.

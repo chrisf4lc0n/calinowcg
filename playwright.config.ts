@@ -57,7 +57,15 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        // Alpine/musl hosts have no Playwright-downloaded Chromium build.
+        // Point at a system/musl Chromium via E2E_CHROMIUM_PATH (see
+        // e2e/AGENTS.md); unset elsewhere => stock Playwright behaviour.
+        ...(process.env.E2E_CHROMIUM_PATH
+          ? { launchOptions: { executablePath: process.env.E2E_CHROMIUM_PATH } }
+          : {}),
+      },
     },
     {
       name: 'firefox',
