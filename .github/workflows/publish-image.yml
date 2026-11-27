@@ -20,15 +20,18 @@ concurrency:
 
 jobs:
   # Gate: :latest feeds watchtower-style auto-updating deployments, so a push
-  # to main only publishes once the full browser matrix is green.
+  # to main only publishes once every sharded browser job is green.
   e2e:
     strategy:
       fail-fast: false
       matrix:
         browser: [chromium, firefox, webkit]
+        shard: [1, 2, 3, 4]
     uses: ./.github/workflows/e2e-reusable.yml
     with:
       browser: ${{ matrix.browser }}
+      shard: ${{ matrix.shard }}
+      shards: 4
 
   publish:
     needs: e2e

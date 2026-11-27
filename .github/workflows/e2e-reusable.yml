@@ -1,7 +1,10 @@
-# Reusable: runs one Playwright project against the in-repo mock CalDAV stack
-# (vite middleware + the fixture DAV server). Callers pass a browser project
-# name. The live-CALDAV specs self-skip without credentials, so no secrets
-# are needed here.
+# Reusable: runs one Playwright project shard against an isolated mock CalDAV
+# stack (vite middleware + the fixture DAV server). Each shard job gets its
+# own runner, hence its own vite/mock process — the suite's 515 tests saturate
+# a single shared mock server on CI hardware and sync-driven polls then time
+# out (see the workers note in playwright.config.ts). Callers pass a browser
+# project name plus shard index/total. The live-CALDAV specs self-skip
+# without credentials, so no secrets are needed here.
 name: E2E (reusable)
 
 on:
@@ -10,16 +13,22 @@ on:
       browser:
         required: true
         type: string
+      shard:
+        required: true
+        type: number
+      shards:
+        required: true
+        type: number
 
 permissions:
   contents: read
 
 jobs:
   e2e:
-    name: ${{ inputs.browser }}
+    name: ${{ inputs.browser }} shard ${{ inputs.shard }}/${{ inputs.shards }}
     runs-on: ubuntu-latest
-    # The suite is ~125 spec files on two workers; a cold runner plus browser
-    # install fits inside this. A run that blows past it is hung, not slow.
+    # One quarter of ~125 spec files on two workers; a cold runner plus
+    # browser install fits inside this. A run that blows past it is hung.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -52,13 +61,13 @@ jobs:
       # CI=true (set by Actions) switches the config to its CI profile:
       # 2 retries, forbidOnly, GitHub-annotated reporter.
       - name: Run e2e
-        run: pnpm test:e2e --project=${{ inputs.browser }}
+        run: pnpm test:e2e --project=${{ inputs.browser }} --shard=${{ inputs.shard }}/${{ inputs.shards }}
 
       - name: Upload failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: playwright-report-${{ inputs.browser }}
+          name: playwright-report-${{ inputs.browser }}-${{ inputs.shard }}
           path: |
             playwright-report/
             e2e/test-results/
