@@ -205,7 +205,31 @@ const WINDOWS_TZID_ALIASES: Record<string, string> = {
   'Line Islands Standard Time': 'Pacific/Kiritimati',
 }
 
-let primed = false
+/**
+ * A minimal, valid VTIMEZONE for each UTC alias. Registration used to seed
+ * `ICAL.Timezone.utcTimezone`, whose `.component` is null; ical.js's
+ * `updateTimezones` then crashes on `addSubcomponent(null)` for every
+ * component whose DTSTART carries `TZID=UTC` (i.e. any event written on a
+ * UTC machine). A real component makes that emit path work, and expansion
+ * behaviour is unchanged: offset +0000 with no transitions.
+ */
+function utcTimezoneComponent(tzid: string): ICAL.Timezone {
+  const jcal = ICAL.parse(
+    [
+      'BEGIN:VTIMEZONE',
+      `TZID:${tzid}`,
+      'BEGIN:STANDARD',
+      'DTSTART:19700101T000000',
+      'TZOFFSETFROM:+0000',
+      'TZOFFSETTO:+0000',
+      `TZNAME:${tzid}`,
+      'END:STANDARD',
+      'END:VTIMEZONE',
+      '',
+    ].join('\r\n')
+  )
+  return new ICAL.Timezone(new ICAL.Component(jcal))
+}
 
 /**
  * ical.js TimezoneService starts with no zones at all; seed Z/UTC/GMT once.
@@ -218,19 +242,16 @@ let primed = false
  * idempotent per alias, so an already-populated service is left untouched.
  */
 function primeService(): void {
-  if (
-    primed &&
-    ICAL.TimezoneService.has('UTC') &&
-    ICAL.TimezoneService.has('Z') &&
-    ICAL.TimezoneService.has('GMT')
-  ) {
-    return
+  // Not just has(): ical.js's reset() re-seeds UTC/Z/GMT with bare
+  // ICAL.Timezone objects that carry no VTIMEZONE component, and
+  // updateTimezones crashes when it tries to emit one. Repair any entry
+  // that lost its component instead of trusting the seed.
+  for (const alias of ['UTC', 'Z', 'GMT']) {
+    const current = ICAL.TimezoneService.get(alias)
+    if (!current || !current.component) {
+      ICAL.TimezoneService.register(utcTimezoneComponent(alias), alias)
+    }
   }
-  const utc = ICAL.Timezone.utcTimezone
-  if (!ICAL.TimezoneService.has('UTC')) ICAL.TimezoneService.register(utc, 'UTC')
-  if (!ICAL.TimezoneService.has('Z')) ICAL.TimezoneService.register(utc, 'Z')
-  if (!ICAL.TimezoneService.has('GMT')) ICAL.TimezoneService.register(utc, 'GMT')
-  primed = true
 }
 
 /**

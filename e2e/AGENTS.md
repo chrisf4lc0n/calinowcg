@@ -56,3 +56,13 @@ layouts. Vitest excludes E2E files and runs its unit tests in both
   `FONTCONFIG_FILE` that build needs (missing fontconfig makes the renderer
   crash on text input). The firefox and webkit projects stay unavailable
   there; run them on a glibc machine.
+- CI runners are `TZ=UTC`, which unit tests never cover (they run in
+  `America/New_York` and `Europe/Copenhagen` only). A deterministic UTC-only
+  bug once failed ~12 write-path specs on CI while passing locally: ical.js
+  seeds `UTC`/`Z`/`GMT` with bare `Timezone` objects whose `.component` is
+  null, so `ICAL.helpers.updateTimezones` crashed on `addSubcomponent(null)`
+  for every timed event stamped `TZID=UTC` and no PUT ever reached the mock
+  server. `src/lib/timezoneRegistry.ts` now registers real VTIMEZONE
+  components and repairs re-seeded entries. If CI e2e failures look
+  timezone-shaped, reproduce with `TZ=UTC pnpm test:e2e ...` before blaming
+  load.

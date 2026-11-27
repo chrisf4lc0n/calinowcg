@@ -2484,6 +2484,23 @@ END:VCALENDAR`
       })
       expect(out).not.toContain('BEGIN:VTIMEZONE')
     })
+    it('does not crash for an event whose zone is UTC', () => {
+      // On a UTC device every timed event is stamped TZID=UTC. The service
+      // used to seed a bare ICAL.Timezone for 'UTC' (no VTIMEZONE component),
+      // so updateTimezones called addSubcomponent(null) and every server
+      // write threw. The seeded zone must carry a real component.
+      const out = eventToICAL({
+        id: 'utc-vtz',
+        calendarId: 'cal-1',
+        title: 'UTC device',
+        start: '2026-10-26T09:00:00',
+        end: '2026-10-26T10:00:00',
+        isAllDay: false,
+        timezone: 'UTC',
+      })
+      expect(out).toContain('DTSTART;TZID=UTC:20261026T090000')
+      expect(out).toContain('TZID:UTC')
+    })
   })
 
   describe('Phase 4: import robustness', () => {

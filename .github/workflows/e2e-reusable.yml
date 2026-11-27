@@ -1,10 +1,11 @@
 # Reusable: runs one Playwright project shard against an isolated mock CalDAV
 # stack (vite middleware + the fixture DAV server). Each shard job gets its
-# own runner, hence its own vite/mock process — the suite's 515 tests saturate
-# a single shared mock server on CI hardware and sync-driven polls then time
-# out (see the workers note in playwright.config.ts). Callers pass a browser
-# project name plus shard index/total. The live-CALDAV specs self-skip
-# without credentials, so no secrets are needed here.
+# own runner, hence its own vite/mock process: the suite's ~515 tests keep
+# the parallel load on one shared mock server modest and wall time per job
+# ~9m instead of ~25m (see the workers note in playwright.config.ts).
+# Callers pass a browser project name plus shard index/total. The
+# live-CALDAV specs self-skip without credentials, so no secrets are needed
+# here.
 name: E2E (reusable)
 
 on:
