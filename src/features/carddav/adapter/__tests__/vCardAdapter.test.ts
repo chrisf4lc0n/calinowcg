@@ -2,6 +2,36 @@ import { describe, it, expect } from 'vitest'
 import { parseVCard, contactToVCard } from '../vCardAdapter'
 import type { Contact } from '../../types'
 
+describe('Apple itemN. grouped properties', () => {
+  const vcard = [
+    'BEGIN:VCARD',
+    'VERSION:3.0',
+    'FN:John Appleseed',
+    'item1.EMAIL;type=INTERNET;type=pref:john@example.com',
+    'item1.X-ABLabel:_$!<Work>!$_',
+    'item2.ADR;type=HOME:;;1 Infinite Loop;Cupertino;CA;95014;United States',
+    'item2.X-ABADR:us',
+    'item3.URL;type=pref:https\\://example.com',
+    'END:VCARD',
+  ].join('\r\n')
+
+  it('reads grouped e-mails, addresses and URLs', () => {
+    const contact = parseVCard(vcard, ADDRESS_BOOK_ID, ACCOUNT_ID)!
+    expect(contact.emails).toMatchObject([{ value: 'john@example.com', type: 'work' }])
+    expect(contact.addresses).toMatchObject([{ street: '1 Infinite Loop', city: 'Cupertino' }])
+    expect(contact.urls).toMatchObject([{ value: 'https://example.com' }])
+  })
+
+  it('writes each grouped value once on save', () => {
+    const serialized = contactToVCard(parseVCard(vcard, ADDRESS_BOOK_ID, ACCOUNT_ID)!)
+    expect(serialized.match(/john@example\.com/g)).toHaveLength(1)
+    expect(serialized.match(/Infinite Loop/g)).toHaveLength(1)
+    expect(serialized).toMatch(/item1\.EMAIL[^:]*:john@example\.com/)
+    expect(serialized).toMatch(/item2\.ADR[^:]*:;;1 Infinite Loop/)
+    expect(serialized).toContain('item2.X-ABADR:us')
+  })
+})
+
 // Helper to create a minimal valid Contact for serialization tests
 function makeMinimalContact(id: string): Contact {
   return {
@@ -1698,5 +1728,26 @@ END:VCARD`
     const long = { ...contact, note: 'é😀, '.repeat(40) }
     const serialized = contactToVCard(long)
     expect(parseVCard(serialized, ADDRESS_BOOK_ID, ACCOUNT_ID)!.note).toBe(long.note)
+  })
+})
+
+describe('vCard 2.1 quoted-printable values', () => {
+  const vcard = [
+    'BEGIN:VCARD',
+    'VERSION:2.1',
+    'FN:Anna',
+    'ADR;HOME;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:;;M=C3=BCnchner Stra=C3=9Fe 5;K=C3=B6ln;;50667;Deutschland',
+    'NOTE;CHARSET=UTF-8;ENCODING=QUOTED-PRINTABLE:Gr=C3=BC=C3=9Fe aus K=C3=B6ln, den =',
+    'Code am Tor eingeben=0D=0Abitte',
+    'TITLE;CHARSET=ISO-8859-1;ENCODING=QUOTED-PRINTABLE:Gesch=E4ftsf=FChrer',
+    'END:VCARD',
+  ].join('\r\n')
+
+  it('decodes addresses and notes, joining soft line breaks', () => {
+    const contact = parseVCard(vcard, ADDRESS_BOOK_ID, ACCOUNT_ID)!
+    expect(contact.addresses).toMatchObject([{ street: 'Münchner Straße 5', city: 'Köln' }])
+    expect(contact.note).toBe('Grüße aus Köln, den Code am Tor eingeben\nbitte')
+    expect(contact.title).toBe('Geschäftsführer')
+    expect(contactToVCard(contact)).toContain('Münchner Straße 5;Köln')
   })
 })

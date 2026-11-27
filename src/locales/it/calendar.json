@@ -113,7 +113,8 @@
       "updateAvailable": "Calino {{version}} è disponibile",
       "updateCurrentVersion": "Hai {{version}}",
       "updateDismiss": "Ignora",
-      "updateViewRelease": "Visualizza la versione"
+      "updateViewRelease": "Visualizza la versione",
+      "calendarSettings": "Impostazioni calendario"
     }
   },
   "surface": {
@@ -424,6 +425,7 @@
       "end": "Fine",
       "endTime": "Ora di fine",
       "foreignZoneTimes": "{{times}} in {{zone}}",
+      "timezone": "Fuso orario",
       "allDay": "Tutto il giorno",
       "available": "Disponibile",
       "showMoreOptions": "Mostra più opzioni",
@@ -825,5 +827,10 @@
     "travel": {
       "bar": "{{duration}} di spostamento"
     }
+  },
+  "rollingPrompt": {
+    "message": "Questo elenco sembra essere modificato da {{client}}. Completare le attività ricorrenti spostando in avanti la data di scadenza?",
+    "accept": "Usa completamento a rotazione",
+    "dismiss": "Non ora"
   }
 }

@@ -1,8 +1,9 @@
+import { planRollingTaskCompletion } from '@/lib/rollingTaskCompletion'
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { safeLocalStorage } from '@/lib/storage'
 import { parseISO, isWithinInterval, startOfDay, endOfDay } from 'date-fns'
-import { RRule } from 'rrule'
+import { RRuleSet } from 'rrule'
 import type {
   CalendarStore,
   CalendarEvent,
@@ -11,6 +12,7 @@ import type {
   EventType,
   DuplicateUidIssue,
   TaskOccurrencePlan,
+  RollingTaskCompletionPlan,
   CalendarEventChanges,
 } from '@/types'
 import type { Category, AutoCategoryRule } from '@/types/categories'
@@ -25,6 +27,7 @@ import {
   materializeOccurrenceAt,
   rruleAnchor,
   rruleWindow,
+  buildRecurrenceSet,
   expandZonedOccurrences,
   parseOccurrenceInstant,
 } from '@/lib/occurrenceExpansion'
@@ -160,15 +163,14 @@ let eventIndexHome: string | null = null
 // RRule construction is expensive and the rules themselves are immutable, so
 // this cache lives at module scope and survives across queries (it used to be
 // rebuilt per call, which meant it only ever helped within a single range).
-const rruleCache = new Map<string, RRule>()
+const rruleCache = new Map<string, RRuleSet>()
 const MAX_RRULE_CACHE = 512
 
-function getOrCreateRRule(rruleStr: string, eventStart: Date): RRule {
+function getOrCreateRRule(rruleStr: string, eventStart: Date): RRuleSet {
   const key = `${rruleStr}|${eventStart.getTime()}`
   let rule = rruleCache.get(key)
   if (!rule) {
-    const options = RRule.parseString(rruleStr)
-    rule = new RRule({ ...options, dtstart: eventStart })
+    rule = buildRecurrenceSet(rruleStr, eventStart)
     if (rruleCache.size > MAX_RRULE_CACHE) rruleCache.clear()
     rruleCache.set(key, rule)
   }
@@ -941,6 +943,29 @@ export const useCalendarStore = create<CalendarStore>()(
         }
       },
 
+      completeTaskOccurrenceRolling: (
+        masterId: string,
+        occurrenceStart: string
+      ): RollingTaskCompletionPlan | null => {
+        const events = get().events
+        const master = events.find((event) => event.id === masterId && event.type === 'task')
+        if (!master) return null
+
+        const uid = master.uid || master.id
+        const overrides = new Map<string, CalendarEvent>()
+        for (const event of events) {
+          if (!event.recurrenceId) continue
+          if (event.uid === uid || event.recurrenceMasterId === masterId) {
+            overrides.set(event.recurrenceId, event)
+          }
+        }
+
+        return planRollingTaskCompletion(master, occurrenceStart, overrides, {
+          now: new Date(),
+          newUid: createUuid(),
+        })
+      },
+
       deleteEvent: (id: string): void => {
         // Clean up attachments from IndexedDB (fire and forget)
         deleteAttachments(id).catch(() => {})
@@ -1087,6 +1112,10 @@ export const useCalendarStore = create<CalendarStore>()(
           return { calendars: [...state.calendars, calendar] }
         })
         bumpRangeExpansionVersion()
+      },
+
+      getCalendar: (id: string): Calendar | undefined => {
+        return get().calendars.find((c) => c.id === id)
       },
 
       reorderCalendar: (id: string, overId: string): void => {

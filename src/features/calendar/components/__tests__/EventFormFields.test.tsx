@@ -67,6 +67,10 @@ describe('EventFormFields', () => {
     organizer: undefined,
     startIso: '2026-03-10T09:00:00',
     endIso: '2026-03-10T10:00:00',
+    formTimezone: 'UTC',
+    homeTimezone: 'UTC',
+    showTimezone: true,
+    onFormTimezoneChange: vi.fn(),
   }
 
   const renderWithMoreOptions = (props = {}) => {

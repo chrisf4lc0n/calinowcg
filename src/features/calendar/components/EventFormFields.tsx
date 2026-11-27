@@ -1,6 +1,7 @@
 import type { JSX } from 'react'
 import { useId, useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { Globe } from 'lucide-react'
 import { createUuid } from '@/lib/uuid'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -13,78 +14,34 @@ import type {
   CalendarOrganizer,
 } from '@/types'
 import { useSettingsStore } from '@/store/settingsStore'
-import { daysBetween, addDays, clockPattern, formatInZone } from '@/lib/datetime'
+import { daysBetween, addDays } from '@/lib/datetime'
 import {
   MAX_REMINDER_MINUTES,
   parseReminderInput,
   REMINDER_UNITS,
   type ReminderUnit,
 } from '@/lib/reminderUnits'
-import { homeTimezone, parseHomeWall } from '@/lib/homeTimezone'
 import { format } from 'date-fns'
-import { normalizeTzid } from '@/lib/timezoneRegistry'
+import { homeZoneTimes } from '../lib/homeZoneTimes'
 import { AttachmentSection } from './AttachmentSection'
 import { AttendeeSection } from './AttendeeSection'
 import { DateField } from './DateField'
 import { TimeField } from './TimeField'
+import { TimezoneSelect } from '@/features/settings/components/TimezoneSelect'
 import { RecurrenceFields, RecurrenceToggle } from './RecurrenceFields'
 import styles from './EventModal.module.css'
 
-/**
- * The event's own times, for a series anchored in a zone other than home.
- * The form's fields are home-zone wall clocks, so this is the same moment
- * read on the event's clock — what actually moves when the fields change.
- * Returns null when there is nothing to disambiguate.
- */
-function foreignZoneTimes(
-  eventTimezone: string | undefined,
-  isAllDay: boolean,
-  startDate: string,
-  startTime: string,
-  endDate: string,
-  endTime: string,
-  timeFormat: '12h' | '24h'
-): { zoneLabel: string; times: string } | null {
-  if (!eventTimezone || isAllDay) return null
-  const calculationTimezone = normalizeTzid(eventTimezone)
-  if (calculationTimezone === normalizeTzid(homeTimezone())) return null
-
-  const startInstant = parseHomeWall(`${startDate}T${startTime}:00`)
-  const endInstant = parseHomeWall(`${endDate}T${endTime}:00`)
-  if (Number.isNaN(startInstant.getTime()) || Number.isNaN(endInstant.getTime())) return null
-
-  let start: string
-  let end: string
-  try {
-    start = formatInZone(startInstant, calculationTimezone, clockPattern(timeFormat))
-    end = formatInZone(endInstant, calculationTimezone, clockPattern(timeFormat))
-    // A late or early event can sit on a different calendar day over there, so
-    // name the day when it differs — otherwise the times alone would mislead.
-    const startDay = formatInZone(startInstant, calculationTimezone, 'yyyy-MM-dd')
-    if (startDay !== startDate) {
-      start = `${formatInZone(startInstant, calculationTimezone, 'MMM d')}, ${start}`
-    }
-  } catch {
-    // Unknown zone: better to show nothing than a wrong time.
-    return null
-  }
-
-  return {
-    // 'America/Los_Angeles' reads as 'Los Angeles'; the region prefix is noise
-    // once the city is there.
-    zoneLabel: (eventTimezone.split('/').pop() ?? eventTimezone).replace(/_/g, ' '),
-    times: `${start}\u2013${end}`,
-  }
-}
-
 interface EventFormFieldsProps {
   /**
-   * The event's own TZID, when it has one. The date/time fields always work in
-   * the home zone, so a foreign TZID is otherwise invisible: editing a 09:00
-   * Los Angeles meeting from Copenhagen shows 18:00 with nothing saying what
-   * is actually being moved. Shown as a read-only line under the fields.
+   * Zone the timed date/time fields are wall clocks in (#281): the event's own
+   * TZID, the zone the user picked, or home. Edited with the zone picker under
+   * the fields; when it is not home, a line shows the same times at home.
    */
-  eventTimezone?: string
+  formTimezone: string
+  homeTimezone: string
+  onFormTimezoneChange: (zone: string) => void
+  showTimezone: boolean
+  onTimezoneToggle?: () => void
   isAllDay: boolean
   onIsAllDayChange: (checked: boolean) => void
   startDate: string
@@ -189,7 +146,11 @@ export function EventFormFields({
   onIsAllDayChange,
   startDate,
   onStartDateChange,
-  eventTimezone,
+  formTimezone,
+  homeTimezone: homeTz,
+  onFormTimezoneChange,
+  showTimezone,
+  onTimezoneToggle,
   startTime,
   onStartTimeChange,
   endDate,
@@ -244,6 +205,9 @@ export function EventFormFields({
   // RecurrenceDialog/DeleteDialog).
   const startDateId = useId()
   const endDateId = useId()
+  const timezoneId = useId()
+  const timezoneLabel = t('modals.eventForm.timezone')
+  const canToggleTimezone = !isAllDay && !!onTimezoneToggle
   const advancedOptionsId = useId()
   const [moreOpen, setMoreOpen] = useState(false)
   const [reminderDropdownOpen, setReminderDropdownOpen] = useState(false)
@@ -295,7 +259,8 @@ export function EventFormFields({
 
   const customReminderMinutes = parseReminderInput(customReminderValue, customReminderUnit)
   const customReminderDuplicate =
-    customReminderMinutes !== null && reminders.some((r) => r.minutesBefore === customReminderMinutes)
+    customReminderMinutes !== null &&
+    reminders.some((r) => r.minutesBefore === customReminderMinutes)
   const customReminderReady = customReminderMinutes !== null && !customReminderDuplicate
 
   const addCustomReminder = (): void => {
@@ -322,7 +287,9 @@ export function EventFormFields({
 
   return (
     <>
-      <div className={styles.dateTimeRow}>
+      <div
+        className={`${styles.dateTimeRow}${canToggleTimezone ? ` ${styles.dateTimeRowWithTimezone}` : ''}`}
+      >
         <div className={styles.dateTimeGroup}>
           <label className={styles.label} htmlFor={startDateId}>
             {t('modals.eventForm.start')}
@@ -406,11 +373,47 @@ export function EventFormFields({
             )}
           </div>
         </div>
+        {canToggleTimezone && (
+          <button
+            type="button"
+            className={styles.timezoneToggle}
+            aria-label={timezoneLabel}
+            aria-expanded={showTimezone}
+            aria-controls={timezoneId}
+            title={timezoneLabel}
+            onClick={onTimezoneToggle}
+          >
+            <Globe size={16} aria-hidden="true" />
+          </button>
+        )}
       </div>
 
+      {!isAllDay && (
+        <div id={timezoneId} hidden={!showTimezone}>
+          {showTimezone && (
+            <div className={styles.eventTimezoneRow} data-component="event-timezone">
+              <span className={styles.eventTimezoneLabel}>{timezoneLabel}</span>
+              <div className={styles.eventTimezonePicker}>
+                <TimezoneSelect
+                  value={formTimezone}
+                  onChange={(zone) => {
+                    if (zone) onFormTimezoneChange(zone)
+                  }}
+                  ariaLabel={timezoneLabel}
+                  includeAutomatic={false}
+                  floating
+                  dataComponent="event-timezone-select"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {(() => {
-        const foreign = foreignZoneTimes(
-          eventTimezone,
+        const home = homeZoneTimes(
+          formTimezone,
+          homeTz,
           isAllDay,
           startDate,
           startTime,
@@ -418,12 +421,12 @@ export function EventFormFields({
           endTime,
           timeFormat
         )
-        if (!foreign) return null
+        if (!home) return null
         return (
-          <div className={styles.foreignZoneNote} data-component="event-foreign-zone">
+          <div className={styles.foreignZoneNote} data-component="event-home-zone-times">
             {t('modals.eventForm.foreignZoneTimes', {
-              times: foreign.times,
-              zone: foreign.zoneLabel,
+              times: home.times,
+              zone: home.zoneLabel,
             })}
           </div>
         )
