@@ -2558,7 +2558,24 @@ export function useCalDAVInstance(): UseCalDAVReturn {
             synced = true
           }
 
-          if (selectionChanged && !synced) await syncAccount(accountId)
+          if (selectionChanged && !synced) {
+            // The selection is recorded above, but a sync already in flight —
+            // the app's startup auto-sync usually — filtered its calendars
+            // under the OLD selection and will not see this change. Joining
+            // it would strand deselected calendars until the next auto-sync
+            // minutes later; chain a follow-up pass that ends in this load.
+            const inFlight = inFlightSyncs.get(accountId)
+            if (inFlight) {
+              inFlight
+                .catch(() => undefined)
+                .then(() => syncAccount(accountId))
+                .catch((err) =>
+                  console.error('[CalDAV] Follow-up sync after selection change failed:', err)
+                )
+            } else {
+              await syncAccount(accountId)
+            }
+          }
         } catch (err) {
           console.error(`[CalDAV] Failed to apply preconfigured account ${name}:`, err)
         }
