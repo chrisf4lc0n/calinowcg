@@ -17,7 +17,9 @@ type TestWindow = Window & {
 
 const toolNames = ['list_calendars', 'open_event', 'prepare_event', 'search_events']
 
-test.use({ launchOptions: { args: ['--enable-features=WebMCPTesting,WebMCP'] } })
+// The Chromium feature flags are only passed to the native-API describe below:
+// WebKit's launcher rejects unknown args and closes the browser on launch,
+// which took out every mocked WebMCP test on webkit runs.
 
 // Test the producer contract on all browsers without depending on an origin
 // trial. Registration is deliberately asynchronous to exercise React cleanup.
@@ -434,6 +436,8 @@ test.describe('WebMCP native Chromium API', () => {
   test.use({
     viewport: { width: 1280, height: 800 },
     timezoneId: 'Europe/Copenhagen',
+    // The --enable-features flags live in the chromium project (config):
+    // describe-level launchOptions are not allowed.
   })
 
   test('the real browser discovers, invokes and unregisters Calino tools', async ({

@@ -224,7 +224,14 @@ test.describe('Week view — pinch gesture wiring', () => {
     await expect(page.locator(SCROLL)).toBeVisible()
   })
 
-  test('pinching in with two fingers compresses the days', async ({ page }) => {
+  test('pinching in with two fingers compresses the days', async ({
+    page,
+    browserName,
+  }) => {
+    // Synthetic pinch needs `new Touch(...)`; Playwright WebKit marks Touch
+    // non-constructible (Illegal constructor), so the gesture can't be
+    // driven there. Chromium exercises this binding in CI.
+    test.skip(browserName === 'webkit', 'WebKit lacks the Touch constructor')
     // Drives real touch events on the element, because the failure this
     // covers was purely one of binding: the previous pinch went through
     // @use-gesture, which with `pointer: { touch: true }` returns onTouch*

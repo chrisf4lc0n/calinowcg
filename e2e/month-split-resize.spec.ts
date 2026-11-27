@@ -75,7 +75,14 @@ async function touchTap(page: import('@playwright/test').Page): Promise<void> {
   })
 }
 
-test('the mobile month split can be adjusted repeatedly by touch', async ({ page }) => {
+test('the mobile month split can be adjusted repeatedly by touch', async ({
+  page,
+  browserName,
+}) => {
+  // Playwright WebKit exposes no constructible Touch/TouchEvent, so the
+  // synthetic multi-touch this drives cannot exist there; real mobile
+  // WebKit (iOS Safari) does. Chromium covers the wiring in CI.
+  test.skip(browserName === 'webkit', 'WebKit lacks the Touch constructor')
   await clearState(page)
   await page.goto('/month')
 
@@ -103,7 +110,12 @@ test('the mobile month split can be adjusted repeatedly by touch', async ({ page
   expect(afterSecondDrag.topHeight).toBeLessThan(initial.topHeight - 30)
 })
 
-test('double-tapping the split resets it to the default position', async ({ page }) => {
+test('double-tapping the split resets it to the default position', async ({
+  page,
+  browserName,
+}) => {
+  // See the note above: synthetic touch needs a constructible Touch.
+  test.skip(browserName === 'webkit', 'WebKit lacks the Touch constructor')
   await clearState(page)
   await page.goto('/month')
 

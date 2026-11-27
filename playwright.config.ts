@@ -62,13 +62,26 @@ export default defineConfig({
         // Alpine/musl hosts have no Playwright-downloaded Chromium build.
         // Point at a system/musl Chromium via E2E_CHROMIUM_PATH (see
         // e2e/AGENTS.md); unset elsewhere => stock Playwright behaviour.
-        ...(process.env.E2E_CHROMIUM_PATH
-          ? { launchOptions: { executablePath: process.env.E2E_CHROMIUM_PATH } }
-          : {}),
+        launchOptions: {
+          args: ['--enable-features=WebMCPTesting,WebMCP'],
+          ...(process.env.E2E_CHROMIUM_PATH
+            ? { executablePath: process.env.E2E_CHROMIUM_PATH }
+            : {}),
+        },
+        // WebMCP (e2e/webmcp.spec.ts) needs the native modelContext behind
+        // Chromium flags; only the file's native-API tests depend on it and
+        // registration stays off without consent, so other specs are
+        // unaffected. Kept in config, not the spec: describe-level
+        // test.use(launchOptions) is illegal, and file-level flags crash
+        // WebKit's launcher on webkit runs.
       },
     },
     {
       name: 'firefox',
+      // Firefox reloads the whole vite dev module graph (thousands of GETs)
+      // far slower than the other engines; the large-subtask-tree spec's hard
+      // reload needs more than the default 30s on CI runners.
+      timeout: 60_000,
       use: { ...devices['Desktop Firefox'] },
     },
     {

@@ -11,6 +11,10 @@ test.describe('time format in event form', () => {
     await page.getByRole('radio', { name: '12-hour (2:30 PM)' }).click()
 
     await page.goto('/month')
+    // Wait for the app to mount before the shortcut: the keydown listener is
+    // attached in an effect, and WebKit can still be loading the dev module
+    // graph when 'load' fires, silently losing the press.
+    await expect(page.locator('[data-component="header"]')).toBeVisible()
     await page.keyboard.press('c')
 
     const startTime = page.locator('[data-component="event-start-time"]')
@@ -25,6 +29,10 @@ test.describe('time format in event form', () => {
 
   test('normalizes a compact 24-hour time when creating an event', async ({ page }) => {
     await page.goto('/month')
+    // Wait for the app to mount before the shortcut: the keydown listener is
+    // attached in an effect, and WebKit can still be loading the dev module
+    // graph when 'load' fires, silently losing the press.
+    await expect(page.locator('[data-component="header"]')).toBeVisible()
     await page.keyboard.press('c')
 
     const startTime = page.locator('[data-component="event-start-time"]')
@@ -36,6 +44,10 @@ test.describe('time format in event form', () => {
 
   test('opens a quarter-hour picker and applies a selected time', async ({ page }) => {
     await page.goto('/month')
+    // Wait for the app to mount before the shortcut: the keydown listener is
+    // attached in an effect, and WebKit can still be loading the dev module
+    // graph when 'load' fires, silently losing the press.
+    await expect(page.locator('[data-component="header"]')).toBeVisible()
     await page.keyboard.press('c')
 
     const startTime = page.locator('[data-component="event-start-time"]')
@@ -58,6 +70,10 @@ test.describe('time format in event form', () => {
 
   test('shrinks filtered times and navigates the picker with arrow keys', async ({ page }) => {
     await page.goto('/month')
+    // Wait for the app to mount before the shortcut: the keydown listener is
+    // attached in an effect, and WebKit can still be loading the dev module
+    // graph when 'load' fires, silently losing the press.
+    await expect(page.locator('[data-component="header"]')).toBeVisible()
     await page.keyboard.press('c')
 
     const startTime = page.locator('[data-component="event-start-time"]')

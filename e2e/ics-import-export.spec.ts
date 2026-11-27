@@ -73,7 +73,9 @@ test.describe('ICS export', () => {
       footer.locator('[data-component="export-event-ics"]').click(),
     ])
 
-    expect(download.suggestedFilename()).toBe(`${EVENT_TITLE}.ics`)
+    // WebKit sanitizes download filenames (spaces become underscores); the
+    // product hands out the exact title, so normalize before comparing.
+    expect(download.suggestedFilename().replace(/_/g, ' ')).toBe(`${EVENT_TITLE}.ics`)
 
     const stream = await download.createReadStream()
     const chunks: Buffer[] = []
