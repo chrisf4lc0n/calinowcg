@@ -1,0 +1,30 @@
+# Reviews and drift detection: the full browser matrix runs on every pull
+# request and nightly against main. Pushes to main are covered by the e2e
+# gate inside publish-image.yml, so this does not trigger on push.
+name: E2E
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # 03:30 UTC daily against main: catches suite rot (upstream syncs,
+    # browser cache changes, slow-machine flakes) without blocking work.
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    uses: ./.github/workflows/e2e-reusable.yml
+    with:
+      browser: ${{ matrix.browser }}

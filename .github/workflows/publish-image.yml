@@ -1,5 +1,6 @@
-# Publishes ghcr.io/<owner>/calinowcg:latest on every push to main, so a server
-# (e.g. a Portainer stack) can pull a ready image instead of building one.
+# Publishes ghcr.io/<owner>/calinowcg:latest on every push to main once the
+# e2e matrix is green, so a server (e.g. a Portainer stack) can pull a ready
+# image instead of building one.
 # The image reads its accounts from a mounted calino.config.json at runtime;
 # see docs/PORTAINER.md.
 name: Publish image
@@ -18,7 +19,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Gate: :latest feeds watchtower-style auto-updating deployments, so a push
+  # to main only publishes once the full browser matrix is green.
+  e2e:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    uses: ./.github/workflows/e2e-reusable.yml
+    with:
+      browser: ${{ matrix.browser }}
+
   publish:
+    needs: e2e
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
